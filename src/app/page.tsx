@@ -2,7 +2,7 @@
 "use client";
 // import { LatestPost } from "~/app/_components/post";
 // import { getServerAuthSession } from "~/server/auth";
-import { HydrateClient } from "~/trpc/server";
+// import { HydrateClient } from "~/trpc/server";
 // import Image from "next/image";
 import { TbMenu } from "react-icons/tb";
 
@@ -13,7 +13,7 @@ export default function Home() {
   // void api.post.getLatest.prefetch();
 
   return (
-    <HydrateClient>
+    <div>
       <div className="sticky top-0 flex w-full flex-col">
         <div className="mx-auto flex w-full flex-col bg-gray-100 px-6 py-3 sm:flex-row sm:justify-center sm:px-12">
           <p className="text-sm text-gray-600">
@@ -100,6 +100,6 @@ export default function Home() {
           </div>
         </div>
       </div>
-    </HydrateClient>
+    </div>
   );
 }
