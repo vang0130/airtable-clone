@@ -2,7 +2,7 @@
 
 // import { LatestPost } from "~/app/_components/post";
 // import { getServerAuthSession } from "~/server/auth";
-import { api, HydrateClient } from "~/trpc/server";
+import { HydrateClient } from "~/trpc/server";
 // import Image from "next/image";
 import { TbMenu } from "react-icons/tb";
 
