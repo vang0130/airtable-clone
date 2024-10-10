@@ -29,7 +29,7 @@
 //   );
 // }
 "use client";
-import "t3/styles/globals.css";
+import "~/styles/globals.css";
 
 import { TRPCReactProvider } from "~/trpc/react";
 import Head from "next/head";
