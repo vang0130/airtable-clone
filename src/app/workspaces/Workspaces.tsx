@@ -1,26 +1,26 @@
 "use client";
-import { useSession } from "next-auth/react";
-import { RxHamburgerMenu } from "react-icons/rx";
-import { RiSearchLine } from "react-icons/ri";
-import { GrCircleQuestion } from "react-icons/gr";
-import { VscBell } from "react-icons/vsc";
-import { GoHome } from "react-icons/go";
-import { GoBook } from "react-icons/go";
-import { PiShoppingBagOpen } from "react-icons/pi";
-import { TbWorld } from "react-icons/tb";
-import { GoPlus } from "react-icons/go";
-import { PiStarFour } from "react-icons/pi";
-import { TbTable } from "react-icons/tb";
-import { FaArrowUp } from "react-icons/fa6";
-import { PiTableLight } from "react-icons/pi";
-import { IoIosArrowDown } from "react-icons/io";
+// import { useSession } from "next-auth/react";
+// import { RxHamburgerMenu } from "react-icons/rx";
+// import { RiSearchLine } from "react-icons/ri";
+// import { GrCircleQuestion } from "react-icons/gr";
+// import { VscBell } from "react-icons/vsc";
+// import { GoHome } from "react-icons/go";
+// import { GoBook } from "react-icons/go";
+// import { PiShoppingBagOpen } from "react-icons/pi";
+// import { TbWorld } from "react-icons/tb";
+// import { GoPlus } from "react-icons/go";
+// import { PiStarFour } from "react-icons/pi";
+// import { TbTable } from "react-icons/tb";
+// import { FaArrowUp } from "react-icons/fa6";
+// import { PiTableLight } from "react-icons/pi";
+// import { IoIosArrowDown } from "react-icons/io";
 
 export default function Workspaces() {
-  const { data: session } = useSession();
+  // const { data: session } = useSession();
 
   return (
     <div>
-      <div className="sticky top-0 z-50 flex h-[57px] w-full items-center justify-center border-b-[1px] border-gray-200 bg-white">
+      {/* <div className="sticky top-0 z-50 flex h-[57px] w-full items-center justify-center border-b-[1px] border-gray-200 bg-white">
         <div className="flex h-[46.2px] w-full flex-row items-center justify-between pl-2 pr-4 align-middle">
           <div className="flex h-full flex-grow flex-row items-center justify-start align-middle">
             <div className="pl-1 pr-2">
@@ -234,7 +234,7 @@ export default function Workspaces() {
             </div>
           </div>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 }
