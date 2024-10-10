@@ -1,16 +1,16 @@
-import Link from "next/link";
+// import Link from "next/link";
 
-import { LatestPost } from "~/app/_components/post";
-import { getServerAuthSession } from "~/server/auth";
+// import { LatestPost } from "~/app/_components/post";
+// import { getServerAuthSession } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
-import Image from "next/image";
+// import Image from "next/image";
 import { TbMenu } from "react-icons/tb";
 
 export default async function Home() {
-  const hello = await api.post.hello({ text: "from tRPC" });
-  const session = await getServerAuthSession();
+  // const hello = await api.post.hello({ text: "from tRPC" });
+  // const session = await getServerAuthSession();
 
-  void api.post.getLatest.prefetch();
+  // void api.post.getLatest.prefetch();
 
   return (
     <HydrateClient>
@@ -72,7 +72,7 @@ export default async function Home() {
             <div className="flex w-full flex-col py-8 sm:flex-row sm:py-16 md:py-[96px]">
               <div className="flex flex-col sm:grid sm:grid-cols-2 md:h-[460.85px] md:grid-cols-[3fr,5fr] md:items-center md:justify-center md:gap-8">
                 <div className="flex flex-col">
-                  <div className="text-5xl text-gray-700 md:text-6xl">
+                  <div className="text-5xl font-bold text-gray-700 md:text-6xl">
                     Digital operations for the AI era
                   </div>
                   <div className="mt-3 text-base text-gray-600 md:text-lg">
@@ -83,7 +83,7 @@ export default async function Home() {
                     <button className="mt-6 h-[45.6px] rounded-xl bg-blue-700 p-3 text-white sm:h-[37.6px] sm:w-[200px] sm:p-0 md:mr-2 md:mt-0 md:h-[40.3px]">
                       <a href="/signup">Sign up for free</a>
                     </button>
-                    <button className="mt-3 h-[45.6px] rounded-xl border-[3px] border-gray-400 bg-[#f5dce5] text-gray-600 sm:h-[37.6px] sm:w-[200px] md:mt-0 md:h-[40.3px]">
+                    <button className="mt-3 h-[45.6px] rounded-xl border-[2px] border-gray-400 bg-white bg-opacity-20 text-gray-600 sm:h-[37.6px] sm:w-[200px] md:mt-0 md:h-[40.3px]">
                       Contact Sales
                     </button>
                   </div>
