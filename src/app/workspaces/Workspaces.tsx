@@ -17,11 +17,10 @@ import { IoIosArrowDown } from "react-icons/io";
 
 export default function Workspaces() {
   const { data: session } = useSession();
-  console.log(session);
-  console.log(session?.user?.image);
+
   return (
     <div>
-      <div className="sticky top-0 z-50 flex h-[57px] w-full items-center justify-center border-b-[1px] border-gray-200 bg-white">
+      {/* <div className="sticky top-0 z-50 flex h-[57px] w-full items-center justify-center border-b-[1px] border-gray-200 bg-white">
         <div className="flex h-[46.2px] w-full flex-row items-center justify-between pl-2 pr-4 align-middle">
           <div className="flex h-full flex-grow flex-row items-center justify-start align-middle">
             <div className="pl-1 pr-2">
@@ -235,7 +234,7 @@ export default function Workspaces() {
             </div>
           </div>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 }
