@@ -1,12 +1,12 @@
 // import Link from "next/link";
-
+"use client";
 // import { LatestPost } from "~/app/_components/post";
 // import { getServerAuthSession } from "~/server/auth";
 import { HydrateClient } from "~/trpc/server";
 // import Image from "next/image";
 import { TbMenu } from "react-icons/tb";
 
-export default async function Home() {
+export default function Home() {
   // const hello = await api.post.hello({ text: "from tRPC" });
   // const session = await getServerAuthSession();
 
