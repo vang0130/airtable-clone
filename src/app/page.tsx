@@ -51,15 +51,19 @@ export default function Home() {
             <p className="ml-1 text-2xl font-bold">Airtable</p>
           </div>
           <div className="my-auto ml-auto flex h-full items-center justify-end align-middle">
-            <button className="hidden h-[30.8px] items-center justify-center rounded-xl bg-blue-700 px-[10px] py-[5px] text-center align-middle text-white sm:flex">
-              <a href="/signup">Sign up for free</a>
-            </button>
-            <button className="flex h-[30.8px] items-center justify-center rounded-xl bg-blue-700 px-[10px] py-[5px] text-center align-middle text-white sm:hidden">
-              <a href="/signup">Sign up</a>
-            </button>
-            <button className="ml-4 hidden text-lg sm:block">
-              <a href="/signin">Sign in</a>
-            </button>
+            <a href="/signup">
+              <button className="hidden h-[30.8px] items-center justify-center rounded-xl bg-blue-700 px-[10px] py-[5px] text-center align-middle text-white sm:flex">
+                Sign up for free
+              </button>
+            </a>
+            <a href="/signup">
+              <button className="flex h-[30.8px] items-center justify-center rounded-xl bg-blue-700 px-[10px] py-[5px] text-center align-middle text-white sm:hidden">
+                Sign up
+              </button>
+            </a>
+            <a href="/signin">
+              <button className="ml-4 hidden text-lg sm:block">Sign in</button>
+            </a>
             <button className="ml-4 mr-6 h-8 w-8">
               <TbMenu className="h-full w-full" />
             </button>
@@ -80,9 +84,11 @@ export default function Home() {
                     processes.
                   </div>
                   <div className="mt-6 flex flex-col gap-3 md:flex-row">
-                    <button className="mt-6 h-[45.6px] rounded-xl bg-blue-700 p-3 text-white sm:h-[37.6px] sm:w-[200px] sm:p-0 md:mr-2 md:mt-0 md:h-[40.3px]">
-                      <a href="/signup">Sign up for free</a>
-                    </button>
+                    <a href="/signup">
+                      <button className="mt-6 h-[45.6px] rounded-xl bg-blue-700 p-3 text-white sm:h-[37.6px] sm:w-[200px] sm:p-0 md:mr-2 md:mt-0 md:h-[40.3px]">
+                        Sign up for free
+                      </button>
+                    </a>
                     <button className="mt-3 h-[45.6px] rounded-xl border-[2px] border-gray-400 bg-white bg-opacity-20 text-gray-600 sm:h-[37.6px] sm:w-[200px] md:mt-0 md:h-[40.3px]">
                       Contact Sales
                     </button>

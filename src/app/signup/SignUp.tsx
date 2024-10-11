@@ -145,9 +145,11 @@ function SignUpButtons({
               <div className="flex w-full flex-row items-center justify-center pb-8">
                 <p className="text-sm text-gray-500">
                   Already have an account?{" "}
-                  <button className="text-sm text-blue-500 underline">
-                    <a href="/signin">Sign in</a>
-                  </button>
+                  <a href="/signin">
+                    <button className="text-sm text-blue-500 underline">
+                      Sign in
+                    </button>
+                  </a>
                 </p>
               </div>
             </div>
