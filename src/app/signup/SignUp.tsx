@@ -94,7 +94,7 @@ export default function SignUp({
                   <button
                     onClick={() =>
                       signIn(provider.id, {
-                        callbackUrl: "/",
+                        callbackUrl: "/workspaces",
                       })
                     }
                     className="mt-3 flex h-[43px] w-full flex-row items-center justify-center rounded-md border-[1px] border-gray-300 text-lg md:mt-2"
