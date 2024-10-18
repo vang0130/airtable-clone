@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 "use client";
 import { useSession } from "next-auth/react";
 import { RxHamburgerMenu } from "react-icons/rx";
@@ -14,9 +15,37 @@ import { TbTable } from "react-icons/tb";
 import { FaArrowUp } from "react-icons/fa6";
 import { PiTableLight } from "react-icons/pi";
 import { IoIosArrowDown } from "react-icons/io";
+import { api } from "~/trpc/react";
+import { useRouter } from "next/navigation";
 
 export default function Workspaces() {
   const { data: session } = useSession();
+  const utils = api.useUtils();
+  const router = useRouter();
+  const { data: tables, isLoading } = api.table.findMany.useQuery();
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    createTable.mutate(
+      { name: "New Table" },
+      {
+        onSuccess: (data) => {
+          const tableSlug = data.id;
+          router.push(`/table/${tableSlug}`);
+        },
+      },
+    );
+  };
+  const createTable = api.table.create.useMutation({
+    onSuccess: async () => {
+      await utils.table.invalidate();
+      // setName("");
+      // setContent("");
+      // setTags([]);
+      // setImageUrl("");
+    },
+  });
 
   return (
     <div>
@@ -104,17 +133,17 @@ export default function Workspaces() {
                   d="M192,120a59.91,59.91,0,0,1,48,24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="16"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="16"
                 />
                 <path
                   d="M16,144a59.91,59.91,0,0,1,48-24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="16"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="16"
                 />
                 <circle
                   cx="128"
@@ -122,33 +151,33 @@ export default function Workspaces() {
                   r="40"
                   fill="none"
                   stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="16"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="16"
                 />
                 <path
                   d="M72,216a65,65,0,0,1,112,0"
                   fill="none"
                   stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="16"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="16"
                 />
                 <path
                   d="M161,80a32,32,0,1,1,31,40"
                   fill="none"
                   stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="16"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="16"
                 />
                 <path
                   d="M64,120A32,32,0,1,1,95,80"
                   fill="none"
                   stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="16"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="16"
                 />
               </svg>
             </div>
@@ -198,14 +227,21 @@ export default function Workspaces() {
                 Easily migrate your existing projects in just a few minutes.
               </p>
             </div>
-            <div className="flex h-[95px] w-full flex-row flex-col rounded-md border-[1px] border-gray-300 bg-white p-4">
-              <div className="flex h-[20px] w-full flex-row items-center">
-                <PiTableLight className="h-5 w-5 text-blue-700" />
-                <p className="ml-2 font-bold">Start from scratch</p>
-              </div>
-              <p className="mt-1 text-xs text-gray-500">
-                Create a new blank base with custom tables, fields, and views.
-              </p>
+            <div className="flex h-[95px] w-full flex-col rounded-md border-[1px] border-gray-300 bg-white p-4">
+              <button
+                className="flex h-full w-full flex-col items-center justify-center"
+                onClick={handleSubmit}
+                type="submit"
+                disabled={createTable.isPending}
+              >
+                <div className="flex h-[20px] w-full flex-row items-center">
+                  <PiTableLight className="h-5 w-5 text-blue-700" />
+                  <p className="ml-2 font-bold">Start from scratch</p>
+                </div>
+                <p className="mt-1 text-left text-xs text-gray-500">
+                  Create a new blank base with custom tables, fields, and views.
+                </p>
+              </button>
             </div>
           </div>
           <div className="mt-2 flex h-[48px] w-full flex-row items-center py-[20px]">
@@ -221,17 +257,26 @@ export default function Workspaces() {
           </div>
 
           <div className="flex flex-col gap-4 sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            <div className="flex h-[95px] w-full flex-row rounded-md border-[1px] border-gray-300 bg-white">
-              <div className="flex h-[92px] w-[92px] items-center justify-center rounded-md">
-                <div className="flex h-[56px] w-[56px] items-center justify-center rounded-xl bg-green-700">
-                  <span className="absolute text-3xl text-white">Ba</span>
+            {tables?.map((table) => (
+              <a href={`/table/${table.id}`} key={table.id}>
+                <div
+                  key={table.id}
+                  className="flex h-[95px] w-full flex-row rounded-md border-[1px] border-gray-300 bg-white"
+                >
+                  <div className="flex h-[92px] w-[92px] items-center justify-center rounded-md">
+                    <div className="flex h-[56px] w-[56px] items-center justify-center rounded-xl bg-green-700">
+                      <span className="absolute text-3xl text-white">
+                        {table.name.substring(0, 2)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex h-full flex-col items-start justify-center">
+                    <p className="mb-2 text-sm font-bold">{table.name}</p>
+                    <p className="text-xs text-gray-500">{table.name}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="flex h-full flex-col items-start justify-center">
-                <p className="mb-2 text-sm font-bold">Base name</p>
-                <p className="text-xs text-gray-500">Base description</p>
-              </div>
-            </div>
+              </a>
+            ))}
           </div>
         </div>
       </div>

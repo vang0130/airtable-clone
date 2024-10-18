@@ -63,6 +63,7 @@ model User {
     accounts      Account[]
     sessions      Session[]
     posts         Post[]
+    tables        Table[]
 }
 
 model VerificationToken {
@@ -71,4 +72,38 @@ model VerificationToken {
     expires    DateTime
 
     @@unique([identifier, token])
+}
+
+model Table {
+    id          Int      @id @default(autoincrement())
+    name        String
+    rows        Row[]
+    createdAt   DateTime @default(now())
+    createdBy   User     @relation(fields: [createdById], references: [id])
+    createdById String
+    Column      Column[]
+}
+
+model Row {
+    id      Int     @id @default(autoincrement())
+    tableId Int
+    table   Table   @relation(fields: [tableId], references: [id])
+    values  Value[]
+}
+
+model Value {
+    id       Int    @id @default(autoincrement())
+    rowId    Int
+    row      Row    @relation(fields: [rowId], references: [id])
+    columnId Int
+    column   Column @relation(fields: [columnId], references: [id])
+    value    String
+}
+
+model Column {
+    id      Int     @id @default(autoincrement())
+    tableId Int
+    table   Table   @relation(fields: [tableId], references: [id])
+    name    String
+    Value   Value[]
 }
