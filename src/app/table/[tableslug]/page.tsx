@@ -20,5 +20,18 @@ export default function TablePage(
   //   );
   // }
 
-  return <Table tableArg={table ? [table] : []} />;
+  return (
+    <Table
+      tableArg={
+        Array.isArray(table) && table.length > 0
+          ? table.map((item) => ({
+              ...item,
+              notes: "",
+              assignee: "",
+              status: "",
+            }))
+          : []
+      }
+    />
+  );
 }

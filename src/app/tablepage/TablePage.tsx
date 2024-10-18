@@ -64,7 +64,17 @@ const defaultData: DataRow[] = [
   },
 ];
 
-const TableCell = ({ getValue, row, column, table }) => {
+const TableCell = ({
+  getValue,
+  row,
+  column,
+  table,
+}: {
+  getValue: () => any;
+  row: any;
+  column: any;
+  table: any;
+}) => {
   const initialValue = getValue();
   const [value, setValue] = useState(initialValue);
 
