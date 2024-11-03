@@ -27,15 +27,12 @@ export default function Workspaces() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    createTable.mutate(
-      { name: "New Table" },
-      {
-        onSuccess: (data) => {
-          const tableSlug = data.id;
-          router.push(`/table/${tableSlug}`);
-        },
+    createTable.mutate(undefined, {
+      onSuccess: (data) => {
+        const tableSlug = data.id;
+        router.push(`/table/${tableSlug}`);
       },
-    );
+    });
   };
   const createTable = api.table.create.useMutation({
     onSuccess: async () => {

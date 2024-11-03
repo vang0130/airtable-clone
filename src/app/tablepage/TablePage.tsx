@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @next/next/no-img-element */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 "use client";
 import { GoPlus } from "react-icons/go";
@@ -18,6 +20,10 @@ import { GoBell } from "react-icons/go";
 import { IoPersonAddOutline, IoPersonOutline } from "react-icons/io5";
 import { useSession } from "next-auth/react";
 import { MdOutlineCheckBoxOutlineBlank } from "react-icons/md";
+import Image from "next/image";
+import { usePathname } from "next/navigation";
+
+import { api } from "~/trpc/react";
 // import { TbLetterA } from "react-icons/tb";
 // import { CgNotes } from "react-icons/cg";
 // import { IoIosArrowDropdown } from "react-icons/io";
@@ -64,88 +70,159 @@ const defaultData: DataRow[] = [
   },
 ];
 
-const TableCell = ({
-  getValue,
-  row,
-  column,
-  table,
+const EditableCell = ({
+  initialValue,
+  onUpdate,
+  rowId,
+  header,
+  rowValues,
 }: {
-  getValue: () => any;
-  row: any;
-  column: any;
-  table: any;
+  initialValue: string;
+  onUpdate: (
+    rowId: number,
+    header: string,
+    value: string,
+    rowValues: Record<string, string>,
+  ) => void;
+  rowId: number;
+  header: string;
+  rowValues: Record<string, string>;
 }) => {
-  const initialValue = getValue();
   const [value, setValue] = useState(initialValue);
+  const [isEditing, setIsEditing] = useState(false);
 
-  useEffect(() => {
-    setValue(initialValue);
-  }, [initialValue]);
-
-  const onBlur = () => {
-    table.options.meta?.updateData(row.index, column.id, value);
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      onUpdate(rowId, header, value, rowValues);
+      setIsEditing(false);
+    }
   };
 
   return (
     <input
+      className="h-full w-full border-none bg-transparent outline-none"
       value={value}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={onBlur}
+      onKeyDown={handleKeyDown}
+      onBlur={() => {
+        onUpdate(rowId, header, value, rowValues);
+        setIsEditing(false);
+      }}
     />
   );
 };
 
-const columnHelper = createColumnHelper<DataRow>();
+// const columnHelper = createColumnHelper<DataRow>();
 
-const columns = [
-  columnHelper.accessor("name", {
-    header: "Name",
-    cell: TableCell,
-  }),
-  columnHelper.accessor("notes", {
-    header: "Notes",
-    cell: TableCell,
-  }),
-  columnHelper.accessor("assignee", {
-    header: "Assignee",
-    cell: TableCell,
-  }),
-  columnHelper.accessor("status", {
-    header: "Status",
-    cell: TableCell,
-  }),
-];
+// const columns = [
+//   columnHelper.accessor("name", {
+//     header: "Name",
+//     cell: TableCell,
+//   }),
+//   columnHelper.accessor("notes", {
+//     header: "Notes",
+//     cell: TableCell,
+//   }),
+//   columnHelper.accessor("assignee", {
+//     header: "Assignee",
+//     cell: TableCell,
+//   }),
+//   columnHelper.accessor("status", {
+//     header: "Status",
+//     cell: TableCell,
+//   }),
+// ];
 
 export default function Table({ tableArg }: { tableArg: DataRow[] }) {
   const { data: session } = useSession();
+  const pathname = usePathname();
+  const id = Number(pathname.split("/").pop());
 
-  const [data, setData] = useState(() => [...tableArg]);
+  const { data: tableData } = api.table.findTable.useQuery({ id: id });
 
-  const table = useReactTable({
-    data,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    meta: {
-      updateData: (rowIndex: number, columnId: string, value: string) => {
-        setData((old) =>
-          old.map((row, index) => {
-            if (index === rowIndex) {
-              return {
-                name: old[rowIndex]?.name ?? "",
-                notes: old[rowIndex]?.notes ?? "",
-                assignee: old[rowIndex]?.assignee ?? "",
-                status: old[rowIndex]?.status ?? "",
-                [columnId]: value,
-              };
-            }
-            return row;
-          }),
-        );
-      },
+  // const [data, setData] = useState(() => [...tableArg]);
+
+  // const table = useReactTable({
+  //   data,
+  //   columns,
+  //   getCoreRowModel: getCoreRowModel(),
+  //   meta: {
+  //     updateData: (rowIndex: number, columnId: string, value: string) => {
+  //       setData((old) =>
+  //         old.map((row, index) => {
+  //           if (index === rowIndex) {
+  //             return {
+  //               name: old[rowIndex]?.name ?? "",
+  //               notes: old[rowIndex]?.notes ?? "",
+  //               assignee: old[rowIndex]?.assignee ?? "",
+  //               status: old[rowIndex]?.status ?? "",
+  //               [columnId]: value,
+  //             };
+  //           }
+  //           return row;
+  //         }),
+  //       );
+  //     },
+  //   },
+  // });
+  const [showHeaderInput, setShowHeaderInput] = useState(false);
+  // input bar for header
+
+  const [headerInput, setHeaderInput] = useState("");
+  // set header string
+  const utils = api.useUtils();
+
+  const handleRowCreate = () => {
+    const values: Record<string, string> = Object.fromEntries(
+      (tableData?.header ?? []).map((header) => [header, ""]),
+    );
+
+    addRow.mutate({
+      tableId: id,
+      values: Object.values(values),
+    });
+  };
+
+  const addRow = api.row.create.useMutation({
+    onSuccess: async () => {
+      await utils.table.invalidate();
     },
   });
 
-  // console.log(table.getRowModel().rows);
+  const handleHeaderAdd = () => {
+    addHeader.mutate({
+      id: id,
+      header: [...(tableData?.header ?? []), headerInput],
+    });
+  };
+
+  const addHeader = api.table.addHeader.useMutation({
+    onSuccess: async () => {
+      await utils.table.invalidate();
+    },
+  });
+
+  const handleCellUpdate = (
+    rowId: number,
+    header: string,
+    cellValue: string,
+    rowValues: Record<string, string>,
+  ) => {
+    updateCell.mutate({
+      rowId: rowId,
+      header: header,
+      values: {
+        ...rowValues,
+        [header]: cellValue,
+      },
+    });
+  };
+
+  const updateCell = api.row.update.useMutation({
+    onSuccess: async () => {
+      await utils.table.invalidate();
+    },
+  });
 
   return (
     <div className="flex h-screen flex-col">
@@ -157,7 +234,6 @@ export default function Table({ tableArg }: { tableArg: DataRow[] }) {
                 width="24"
                 height="20.4"
                 viewBox="0 0 200 170"
-                // style="shape-rendering: geometricprecision;"
                 xmlns="http://www.w3.org/2000/svg"
               >
                 <g>
@@ -212,8 +288,9 @@ export default function Table({ tableArg }: { tableArg: DataRow[] }) {
           </button>
           <button className="mr-2 hidden h-[28px] w-[28px] items-center justify-center rounded-full border-white bg-white text-[#783566] sm:flex">
             <img
-              src={session?.user?.image ?? ""}
+              src={session?.user?.image ?? "avatar.png"}
               className="h-full w-full rounded-full"
+              alt="user avatar"
             />
           </button>
         </div>
@@ -363,58 +440,90 @@ export default function Table({ tableArg }: { tableArg: DataRow[] }) {
           </div>
         </div>
       </div>
-      <div className="flex w-full flex-row items-center justify-start border-b-[1px] border-gray-300 bg-white">
-        <table className="flex min-w-full flex-col overflow-x-scroll">
-          <thead className="z-10 flex h-[30px] flex-row">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr
-                className="flex h-[30px] flex-row bg-gray-100"
-                key={headerGroup.id}
-              >
+      <div className="flex flex-col justify-start border-b-[1px] border-gray-300 bg-white">
+        <div className="flex w-full flex-row items-center justify-start border-b-[1px] border-gray-300 bg-white">
+          <table className="flex min-w-full flex-col overflow-x-scroll">
+            <thead className="z-10 flex h-[30px] flex-row">
+              <tr className="flex h-[30px] flex-row bg-gray-100">
                 <th className="flex h-[30px] min-w-[35px] items-center justify-center border-y-[1px] border-l-[1px] border-gray-300">
                   <MdOutlineCheckBoxOutlineBlank className="h-4 w-4" />
                 </th>
-                {headerGroup.headers.map((header) => (
+                {tableData?.header.map((colName, index) => (
                   <th
                     className="flex h-full w-[178px] flex-row items-center justify-start border-y-[1px] border-r-[1px] border-gray-300 px-2 text-xs font-normal"
-                    key={header.id}
+                    key={index}
                   >
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
+                    {colName}
                   </th>
                 ))}
                 <th className="flex h-[30px] w-[92px] items-center justify-center border-y-[1px] border-r-[1px] border-gray-300">
-                  <GoPlus className="h-4 w-4" />
+                  <button
+                    className="flex h-[26px] items-center border-white px-[6px] text-xs text-black"
+                    onClick={() => setShowHeaderInput(true)}
+                  >
+                    <GoPlus className="h-4 w-4" />
+                  </button>
+                  {showHeaderInput && (
+                    <div className="right-50 absolute top-[150px] z-50">
+                      <input
+                        type="text"
+                        value={headerInput}
+                        onChange={(e) => setHeaderInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            handleHeaderAdd();
+                            setShowHeaderInput(false);
+                            setHeaderInput("");
+                          }
+                        }}
+                        className="border border-gray-300 p-1 text-sm"
+                        autoFocus
+                      />
+                    </div>
+                  )}
                 </th>
               </tr>
-            ))}
-          </thead>
-          <tbody className="col-start-2 flex w-full flex-col items-start justify-start border-gray-300 bg-white">
-            {table.getRowModel().rows.map((row, index) => (
-              <tr
-                className="flex h-[30px] flex-row border-b-[1px] border-gray-300 bg-white"
-                key={row.id}
-              >
-                <td className="flex h-[30px] w-[35px] items-center justify-center border-gray-300 bg-white text-xs font-normal">
-                  {index + 1}
-                </td>
-                {row.getVisibleCells().map((cell) => (
-                  <td
-                    className="flex h-[30px] w-[178px] flex-row items-center justify-start border-r-[1px] border-gray-300 bg-white px-2 text-xs font-normal"
-                    key={cell.id}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+            </thead>
+            <tbody className="col-start-2 flex w-full flex-col items-start justify-start border-gray-300 bg-white">
+              {tableData?.rows.map((row, index) => (
+                <tr
+                  className="flex h-[30px] flex-row border-b-[1px] border-gray-300 bg-white"
+                  key={row.id}
+                >
+                  <td className="flex h-[30px] w-[35px] items-center justify-center border-gray-300 bg-white text-xs font-normal">
+                    {index + 1}
                   </td>
-                ))}
+                  {tableData?.header.map((header, cellIndex) => (
+                    <td
+                      className="flex h-[30px] w-[178px] flex-row items-center justify-start border-r-[1px] border-gray-300 bg-white px-2 text-xs font-normal"
+                      key={cellIndex}
+                    >
+                      <EditableCell
+                        initialValue={
+                          (row.values as Record<string, string>)[header] ?? ""
+                        }
+                        onUpdate={handleCellUpdate}
+                        rowId={row.id}
+                        header={header}
+                        rowValues={row.values as Record<string, string>}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              <tr className="flex h-[30px] flex-row border-gray-300 bg-white">
+                <td className="flex h-[30px] w-[35px] items-center justify-center border-gray-300 bg-white text-xs font-normal">
+                  <button
+                    className="flex h-[26px] items-center border-[2px] border-white px-[6px] text-xs text-black"
+                    onClick={handleRowCreate}
+                  >
+                    <GoPlus className="h-4 w-4" />
+                  </button>
+                </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {/* <pre>{JSON.stringify(data, null, "\t")}</pre> */}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
