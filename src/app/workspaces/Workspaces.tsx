@@ -28,10 +28,12 @@ export default function Workspaces() {
     e.preventDefault();
 
     createSheet.mutate(undefined, {
-      onSuccess: async (data) => {
-        const sheetSlug = data.id;
-        const newTable = await createTable.mutateAsync({ sheetId: data.id });
-        router.push(`/sheet/${sheetSlug}?table=${newTable.id}`);
+      onSuccess: (data) => {
+        void (async () => {
+          const sheetSlug = data.id;
+          const newTable = await createTable.mutateAsync({ sheetId: data.id });
+          router.push(`/sheet/${sheetSlug}?table=${newTable.id}`);
+        })();
       },
     });
   };
