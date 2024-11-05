@@ -24,10 +24,10 @@ export default function Workspaces() {
   const router = useRouter();
   const { data: sheets } = api.sheet.findMany.useQuery();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    void createSheet.mutate(undefined, {
+    await createSheet.mutate(undefined, {
       onSuccess: async (data) => {
         const sheetSlug = data.id;
         const newTable = await createTable.mutateAsync({ sheetId: data.id });
@@ -229,7 +229,7 @@ export default function Workspaces() {
             <div className="flex h-[95px] w-full flex-col rounded-md border-[1px] border-gray-300 bg-white p-4">
               <button
                 className="flex h-full w-full flex-col items-center justify-center"
-                onClick={handleSubmit}
+                onClick={(e) => void handleSubmit(e)}
                 type="submit"
                 disabled={createSheet.isPending}
               >
