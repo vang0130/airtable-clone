@@ -22,12 +22,12 @@ export default function Workspaces() {
   const { data: session } = useSession();
   const utils = api.useUtils();
   const router = useRouter();
-  const { data: sheets, isLoading } = api.sheet.findMany.useQuery();
+  const { data: sheets } = api.sheet.findMany.useQuery();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    createSheet.mutate(undefined, {
+    void createSheet.mutate(undefined, {
       onSuccess: async (data) => {
         const sheetSlug = data.id;
         const newTable = await createTable.mutateAsync({ sheetId: data.id });
