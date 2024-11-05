@@ -22,25 +22,27 @@ export default function Workspaces() {
   const { data: session } = useSession();
   const utils = api.useUtils();
   const router = useRouter();
-  const { data: tables, isLoading } = api.table.findMany.useQuery();
+  const { data: sheets, isLoading } = api.sheet.findMany.useQuery();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    createTable.mutate(undefined, {
-      onSuccess: (data) => {
-        const tableSlug = data.id;
-        router.push(`/table/${tableSlug}`);
+    createSheet.mutate(undefined, {
+      onSuccess: async (data) => {
+        const sheetSlug = data.id;
+        const newTable = await createTable.mutateAsync({ sheetId: data.id });
+        router.push(`/sheet/${sheetSlug}?table=${newTable.id}`);
       },
     });
   };
+  const createSheet = api.sheet.create.useMutation({
+    onSuccess: async () => {
+      await utils.sheet.invalidate();
+    },
+  });
   const createTable = api.table.create.useMutation({
     onSuccess: async () => {
       await utils.table.invalidate();
-      // setName("");
-      // setContent("");
-      // setTags([]);
-      // setImageUrl("");
     },
   });
 
@@ -229,7 +231,7 @@ export default function Workspaces() {
                 className="flex h-full w-full flex-col items-center justify-center"
                 onClick={handleSubmit}
                 type="submit"
-                disabled={createTable.isPending}
+                disabled={createSheet.isPending}
               >
                 <div className="flex h-[20px] w-full flex-row items-center">
                   <PiTableLight className="h-5 w-5 text-blue-700" />
@@ -252,24 +254,23 @@ export default function Workspaces() {
 
             <IoIosArrowDown className="ml-1 h-4 w-4" />
           </div>
-
           <div className="flex flex-col gap-4 sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {tables?.map((table) => (
-              <a href={`/table/${table.id}`} key={table.id}>
+            {sheets?.map((sheet) => (
+              <a href={`/sheet/${sheet.id}`} key={sheet.id}>
                 <div
-                  key={table.id}
+                  key={sheet.id}
                   className="flex h-[95px] w-full flex-row rounded-md border-[1px] border-gray-300 bg-white"
                 >
                   <div className="flex h-[92px] w-[92px] items-center justify-center rounded-md">
                     <div className="flex h-[56px] w-[56px] items-center justify-center rounded-xl bg-green-700">
                       <span className="absolute text-3xl text-white">
-                        {table.name.substring(0, 2)}
+                        {sheet.name.substring(0, 2)}
                       </span>
                     </div>
                   </div>
                   <div className="flex h-full flex-col items-start justify-center">
-                    <p className="mb-2 text-sm font-bold">{table.name}</p>
-                    <p className="text-xs text-gray-500">{table.name}</p>
+                    <p className="mb-2 text-sm font-bold">{sheet.name}</p>
+                    <p className="text-xs text-gray-500">{sheet.name}</p>
                   </div>
                 </div>
               </a>

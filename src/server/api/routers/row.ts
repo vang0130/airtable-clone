@@ -9,7 +9,7 @@ import {
 
 export const rowRouter = createTRPCRouter({
   create: protectedProcedure
-    .input(z.object({ tableId: z.number(), values: z.array(z.string()) }))
+    .input(z.object({ tableId: z.number(), values: z.record(z.string()) }))
     .mutation(async ({ ctx, input }) => {
       return ctx.db.row.create({
         data: {
@@ -22,10 +22,9 @@ export const rowRouter = createTRPCRouter({
   update: protectedProcedure
     .input(z.object({
       rowId: z.number(),
-        values: z.record(z.string()),
-        header: z.string(),
-      }),
-    )
+      values: z.record(z.string()),
+      header: z.number(),
+    }))
     .mutation(async ({ ctx, input }) => {
       return ctx.db.row.update({
         where: { id: input.rowId },

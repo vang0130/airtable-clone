@@ -9,37 +9,56 @@ import {
 
 export const tableRouter = createTRPCRouter({
   create: protectedProcedure
-    .mutation(async ({ ctx }) => {
+    .input(z.object({ sheetId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const tableCount = await ctx.db.table.count();
       return ctx.db.table.create({
         data: {
-          name: `Table ${await ctx.db.table.count() + 1}`,
-          createdBy: { connect: { id: ctx.session.user.id } },
+          name: `Table ${tableCount + 1}`,
+          header: [],
+          createdById: ctx.session.user.id,
+          sheetId: input.sheetId,
         },
       });
     }),
 
-  findMany: publicProcedure.query(async ({ ctx }) => {
-    return ctx.db.table.findMany({
-      orderBy: { createdAt: "desc" },
-      include: { 
-        // createdBy: true, 
-      }, 
-      // where: { archived: false },
-    });
-  }),
+  findMany: publicProcedure
+    .input(z.object({ sheetId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      return ctx.db.table.findMany({
+        where: { sheetId: input.sheetId },
+        orderBy: { createdAt: "desc" },
+        include: { 
+          // createdBy: true, 
+        }, 
+      });
+    }),
+
   findTable: publicProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
-      return ctx.db.table.findUnique({
+      const table = await ctx.db.table.findUnique({
         where: { id: input.id },
-        include: {
-          rows: true,
-        },
+        include: { rows: true }
       });
+
+      return {
+        ...table,
+        rows: table?.rows.map((row) => ({
+          ...row,
+          values: row.values as Record<string, string>,
+        })),
+      };
     }),
 
   addHeader: protectedProcedure
-    .input(z.object({ id: z.number(), header: z.array(z.string()) }))
+    .input(z.object({ 
+      id: z.number(), 
+      header: z.array(z.object({
+        id: z.number(),
+        name: z.string()
+      }))
+    }))
     .mutation(async ({ ctx, input }) => {
       return ctx.db.table.update({
         where: { id: input?.id },
