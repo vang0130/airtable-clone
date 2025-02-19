@@ -23,7 +23,6 @@ export const rowRouter = createTRPCRouter({
     .input(z.object({
       rowId: z.number(),
       values: z.record(z.string()),
-      header: z.number(),
     }))
     .mutation(async ({ ctx, input }) => {
       return ctx.db.row.update({
@@ -31,6 +30,50 @@ export const rowRouter = createTRPCRouter({
         data: {
           values: input.values,
         }
+      });
+    }),
+
+  batchUpdate: protectedProcedure
+    .input(z.object({
+      updates: z.array(z.object({
+        rowId: z.number(),
+        values: z.record(z.string(), z.string()),
+      })),
+      newRows: z.array(z.object({
+        tableId: z.number(),
+        values: z.record(z.string(), z.string()),
+      })),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { updates } = input;
+
+      return ctx.db.$transaction(async (tx) => {
+        const updatePromises = updates.map((update) =>
+          tx.row.update({
+            where: { id: update.rowId },
+            data: { values: update.values },
+          })
+        );
+
+        const [updatedRows] = await Promise.all([
+          Promise.all(updatePromises),
+        ]);
+
+        const newRows = await Promise.all(
+          input.newRows.map(async (newRow) => {
+            return tx.row.create({
+              data: {
+                tableId: newRow.tableId,
+                values: newRow.values,
+              },
+            });
+          }),
+        );
+
+        return {
+          updatedRows,
+          newRows,
+        };
       });
     }),
 });

@@ -15,7 +15,7 @@ export const tableRouter = createTRPCRouter({
       return ctx.db.table.create({
         data: {
           name: `Table ${tableCount + 1}`,
-          header: [],
+          // headers: [],
           createdById: ctx.session.user.id,
           sheetId: input.sheetId,
         },
@@ -39,31 +39,40 @@ export const tableRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const table = await ctx.db.table.findUnique({
         where: { id: input.id },
-        include: { rows: true }
+        include: { rows: true, headers: true }
       });
 
       return {
         ...table,
+        headers: table?.headers ?? [],
         rows: table?.rows.map((row) => ({
           ...row,
           values: row.values as Record<string, string>,
         })),
       };
     }),
-
-  addHeader: protectedProcedure
-    .input(z.object({ 
-      id: z.number(), 
-      header: z.array(z.object({
-        id: z.number(),
-        name: z.string()
-      }))
-    }))
-    .mutation(async ({ ctx, input }) => {
-      return ctx.db.table.update({
-        where: { id: input?.id },
-        data: { header: input?.header },
-      });
-    }),
-
+    // addHeader: protectedProcedure
+    // .input(
+    //   z.object({
+    //     id: z.number(), // Table ID
+    //     headers: z.array(
+    //       z.object({
+    //         name: z.string(), // Remove temp ID because the DB will generate a real one
+    //       })
+    //     ),
+    //   })
+    // )
+    // .mutation(async ({ ctx, input }) => {
+    //   await ctx.db.header.createMany({
+    //     data: input.headers.map((h) => ({
+    //       name: h.name, 
+    //       tableId: input.id,
+    //     }))
+    //   })
+    //   return ctx.db.header.findMany({
+    //     where: {tableId: input.id },
+    //     select: { id: true, name: true }, 
+    //     orderBy: { id: "asc" },
+    //   })
+    // }),
 });

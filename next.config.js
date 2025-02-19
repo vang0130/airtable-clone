@@ -7,6 +7,7 @@ await import("./src/env.js");
 /** @type {import("next").NextConfig} */
 const config = {
   // Disable webpack cache
+  reactStrictMode: false,
   webpack: (config) => {
     config.cache = false;
     return config;
@@ -21,7 +22,7 @@ const config = {
           {
             key: "Set-Cookie",
             value: "__vercel_live_token=value; SameSite=None; Secure",
-          }
+        }
         ]
       },
       {

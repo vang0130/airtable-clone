@@ -87,8 +87,9 @@ model Sheet {
 model Table {
     id          Int      @id @default(autoincrement())
     name        String
-    header      Json
+    // header      Json
     rows        Row[]
+    headers     Header[]
     createdAt   DateTime @default(now())
     createdBy   User     @relation(fields: [createdById], references: [id])
     createdById String
@@ -103,6 +104,14 @@ model Row {
     // json field storing key value matching column headers
     // key = column header, value = cell value
     values    Json
+    createdAt DateTime @default(now())
+}
+
+model Header {
+    id        Int      @id @default(autoincrement())
+    name      String
+    tableId   Int
+    table     Table    @relation(fields: [tableId], references: [id])
     createdAt DateTime @default(now())
 }
 

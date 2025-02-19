@@ -38,6 +38,7 @@ export const sheetRouter = createTRPCRouter({
               createdAt: "asc",
             },
             include: {
+              headers: { orderBy: { id: 'asc' } },
               rows: {
                 orderBy: {
                   createdAt: "asc",
