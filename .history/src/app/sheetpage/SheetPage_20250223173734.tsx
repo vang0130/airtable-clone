@@ -234,25 +234,21 @@ export default function Sheet() {
         id={cellId}
         className="h-[30px] w-full cursor-text border-none bg-transparent outline-none focus:ring-2 focus:ring-blue-500"
         value={editingValue}
-        onChange={(e) => setEditingValue(e.target.value)}
-        onBlur={handleSave}
         onKeyDown={(e) => {
           if (e.key === "Tab") {
             e.preventDefault();
-            if (editingValue !== info.getValue()) {
-              handleCellUpdate(
-                info.row.original.tableId,
-                info.row.original.rowPosition,
-                headers.headerPosition,
-                editingValue,
-                info.row.original.values,
-              );
-            }
-            focusNextCell(e.shiftKey);
-          } else if (e.key === "Enter") {
-            e.currentTarget.blur();
+            const newValue = e.currentTarget.value;
+            handleCellUpdate(
+              info.row.original.tableId,
+              info.row.original.rowPosition,
+              headers.headerPosition,
+              newValue,
+              info.row.original.values,
+            );
+            focusNextCell();
           }
         }}
+        onChange={(e) => setEditingValue(e.target.value)}
       />
     );
   };

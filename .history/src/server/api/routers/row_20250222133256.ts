@@ -39,47 +39,50 @@ export const rowRouter = createTRPCRouter({
     }),
 
   batchUpdate: protectedProcedure
-    .input(
-      z.object({
-        updates: z.array(
-          z.object({
-            // use db id to update
-            rowId: z.number(),
-            values: z.record(z.string()),
-          })
-        ),
-        newRows: z.array(
-          z.object({
-            tableId: z.number(),
-            values: z.record(z.string()),
-            // pass in position once, only on creation
-            rowPosition: z.number(), 
-          })
-        ),
-      })
-    )
+    .input(z.object({
+      updates: z.array(z.object({
+        rowId: z.number(),
+        values: z.record(z.string()),
+      })),
+      newRows: z.array(z.object({
+        tableId: z.number(),
+        values: z.record(z.string()),
+        rowPosition: z.number(),
+      })),
+    }))
     .mutation(async ({ ctx, input }) => {
       return ctx.db.$transaction(async (tx) => {
-        const updatePromises = input.updates.map((update) =>
-          tx.row.update({
-            where: { id: update.rowId },
-            data: { values: update.values },
-            select: { id: true, values: true, rowPosition: true }
+        const updatePromises = input.updates
+          .filter(update => update.rowId > 0)
+          .map((update) =>
+            tx.row.update({
+              where: { id: update.rowId },
+              data: { 
+                values: update.values,
+              },
+            })
+          );
+
+        const newRows = await Promise.all(
+          input.newRows.map(async ({ tableId, values, rowPosition }) => {
+            return tx.row.create({
+              data: {
+                tableId,
+                values,
+                rowPosition,
+              },
+            });
           })
         );
 
-        const newRows = await Promise.all(
-          input.newRows.map(({ tableId, values, rowPosition }) =>
-            tx.row.create({
-              data: { tableId, values, rowPosition },
-              select: { id: true, values: true, rowPosition: true }
-            })
-          )
-        );
+        const [updatedRows] = await Promise.all([
+          Promise.all(updatePromises),
+        ]);
 
-        const updatedRows = await Promise.all(updatePromises);
-
-        return { updatedRows, newRows };
+        return {
+          updatedRows,
+          newRows,
+        };
       });
     }),
 });

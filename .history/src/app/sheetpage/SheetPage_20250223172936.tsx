@@ -194,10 +194,14 @@ export default function Sheet() {
 
   // cell component
   const Cell = ({ info, headers, handleCellUpdate }: CellProps) => {
+    // state for the cell value
     const [editingValue, setEditingValue] = useState(info.getValue() ?? "");
+    // ref for the input element
     const inputRef = useRef<HTMLInputElement>(null);
+    // id for the cell
     const cellId = `cell-${info.row.original.rowPosition}-${headers.headerPosition}`;
 
+    // only update the editing value when the cell data changes and we're not focused
     useEffect(() => {
       if (document.activeElement !== inputRef.current) {
         setEditingValue(info.getValue() ?? "");
@@ -206,6 +210,7 @@ export default function Sheet() {
 
     const handleSave = () => {
       if (editingValue !== info.getValue()) {
+        // just update pendingChanges, don't trigger mutation
         handleCellUpdate(
           info.row.original.tableId,
           info.row.original.rowPosition,
@@ -216,40 +221,30 @@ export default function Sheet() {
       }
     };
 
-    const focusNextCell = (reverse = false) => {
-      const allInputs = Array.from(
-        document.querySelectorAll('input[id^="cell-"]'),
-      );
-      const currentIndex = allInputs.indexOf(inputRef.current!);
-      const nextIndex = reverse ? currentIndex - 1 : currentIndex + 1;
-
-      if (nextIndex >= 0 && nextIndex < allInputs.length) {
-        (allInputs[nextIndex] as HTMLInputElement).focus();
-      }
-    };
-
     return (
       <input
         ref={inputRef}
         id={cellId}
         className="h-[30px] w-full cursor-text border-none bg-transparent outline-none focus:ring-2 focus:ring-blue-500"
         value={editingValue}
-        onChange={(e) => setEditingValue(e.target.value)}
+        onChange={(e) => {
+          setEditingValue(e.target.value);
+        }}
         onBlur={handleSave}
         onKeyDown={(e) => {
           if (e.key === "Tab") {
             e.preventDefault();
-            if (editingValue !== info.getValue()) {
-              handleCellUpdate(
-                info.row.original.tableId,
-                info.row.original.rowPosition,
-                headers.headerPosition,
-                editingValue,
-                info.row.original.values,
-              );
+            const allInputs = Array.from(
+              document.querySelectorAll('input[id^="cell-"]'),
+            );
+            const currentIndex = allInputs.indexOf(e.currentTarget);
+            const nextInput =
+              allInputs[e.shiftKey ? currentIndex - 1 : currentIndex + 1];
+            if (nextInput instanceof HTMLInputElement) {
+              nextInput.focus();
             }
-            focusNextCell(e.shiftKey);
           } else if (e.key === "Enter") {
+            handleSave();
             e.currentTarget.blur();
           }
         }}

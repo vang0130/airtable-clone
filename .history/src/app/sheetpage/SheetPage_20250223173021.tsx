@@ -239,15 +239,7 @@ export default function Sheet() {
         onKeyDown={(e) => {
           if (e.key === "Tab") {
             e.preventDefault();
-            if (editingValue !== info.getValue()) {
-              handleCellUpdate(
-                info.row.original.tableId,
-                info.row.original.rowPosition,
-                headers.headerPosition,
-                editingValue,
-                info.row.original.values,
-              );
-            }
+            handleSave();
             focusNextCell(e.shiftKey);
           } else if (e.key === "Enter") {
             e.currentTarget.blur();

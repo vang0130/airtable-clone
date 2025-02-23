@@ -81,6 +81,7 @@ interface CellProps {
     value: string,
     values: Record<string, string>,
   ) => void;
+  setActiveCell: (active: boolean) => void;
 }
 
 // changes to save on the next ctrl+s
@@ -140,6 +141,7 @@ export default function Sheet() {
     rows: { updates: [], newRows: [] },
   });
 
+  // const [activeCell, setActiveCell] = useState(false);
   const [tableData, setTableData] = useState<Table | undefined>(undefined);
   // check if mutation is currently happening
   const isMutating = useRef(false);
@@ -193,7 +195,12 @@ export default function Sheet() {
   };
 
   // cell component
-  const Cell = ({ info, headers, handleCellUpdate }: CellProps) => {
+  const Cell = ({
+    info,
+    headers,
+    handleCellUpdate,
+    setActiveCell,
+  }: CellProps) => {
     const [editingValue, setEditingValue] = useState(info.getValue() ?? "");
     const inputRef = useRef<HTMLInputElement>(null);
     const cellId = `cell-${info.row.original.rowPosition}-${headers.headerPosition}`;
@@ -216,39 +223,30 @@ export default function Sheet() {
       }
     };
 
-    const focusNextCell = (reverse = false) => {
-      const allInputs = Array.from(
-        document.querySelectorAll('input[id^="cell-"]'),
-      );
-      const currentIndex = allInputs.indexOf(inputRef.current!);
-      const nextIndex = reverse ? currentIndex - 1 : currentIndex + 1;
-
-      if (nextIndex >= 0 && nextIndex < allInputs.length) {
-        (allInputs[nextIndex] as HTMLInputElement).focus();
-      }
-    };
-
     return (
       <input
         ref={inputRef}
         id={cellId}
         className="h-[30px] w-full cursor-text border-none bg-transparent outline-none focus:ring-2 focus:ring-blue-500"
         value={editingValue}
-        onChange={(e) => setEditingValue(e.target.value)}
+        onChange={(e) => {
+          setEditingValue(e.target.value);
+          setActiveCell(true);
+        }}
+        onFocus={() => setActiveCell(true)}
         onBlur={handleSave}
         onKeyDown={(e) => {
           if (e.key === "Tab") {
             e.preventDefault();
-            if (editingValue !== info.getValue()) {
-              handleCellUpdate(
-                info.row.original.tableId,
-                info.row.original.rowPosition,
-                headers.headerPosition,
-                editingValue,
-                info.row.original.values,
-              );
+            const allInputs = Array.from(
+              document.querySelectorAll('input[id^="cell-"]'),
+            );
+            const currentIndex = allInputs.indexOf(e.currentTarget);
+            const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
+
+            if (nextIndex >= 0 && nextIndex < allInputs.length) {
+              (allInputs[nextIndex] as HTMLInputElement).focus();
             }
-            focusNextCell(e.shiftKey);
           } else if (e.key === "Enter") {
             e.currentTarget.blur();
           }
@@ -700,6 +698,9 @@ export default function Sheet() {
               info={info}
               headers={{ ...header, tableId: tableData.id }}
               handleCellUpdate={handleCellUpdate}
+              setActiveCell={(active) => {
+                // Implementation of setActiveCell
+              }}
             />
           ),
         },

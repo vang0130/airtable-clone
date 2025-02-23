@@ -43,8 +43,7 @@ export const rowRouter = createTRPCRouter({
       z.object({
         updates: z.array(
           z.object({
-            // use db id to update
-            rowId: z.number(),
+            rowId: z.number(),  // Use DB-generated ID for updates
             values: z.record(z.string()),
           })
         ),
@@ -52,8 +51,7 @@ export const rowRouter = createTRPCRouter({
           z.object({
             tableId: z.number(),
             values: z.record(z.string()),
-            // pass in position once, only on creation
-            rowPosition: z.number(), 
+            rowPosition: z.number(),  // Position only needed for creation
           })
         ),
       })

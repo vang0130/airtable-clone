@@ -235,11 +235,17 @@ export default function Sheet() {
         className="h-[30px] w-full cursor-text border-none bg-transparent outline-none focus:ring-2 focus:ring-blue-500"
         value={editingValue}
         onChange={(e) => setEditingValue(e.target.value)}
-        onBlur={handleSave}
         onKeyDown={(e) => {
           if (e.key === "Tab") {
             e.preventDefault();
-            if (editingValue !== info.getValue()) {
+            const allInputs = Array.from(
+              document.querySelectorAll('input[id^="cell-"]'),
+            );
+            const currentIndex = allInputs.indexOf(e.currentTarget);
+            const nextInput = allInputs[currentIndex + 1] as HTMLInputElement;
+
+            // Queue the update after the focus change
+            setTimeout(() => {
               handleCellUpdate(
                 info.row.original.tableId,
                 info.row.original.rowPosition,
@@ -247,10 +253,12 @@ export default function Sheet() {
                 editingValue,
                 info.row.original.values,
               );
+            }, 0);
+
+            // Focus next input immediately
+            if (nextInput) {
+              nextInput.focus();
             }
-            focusNextCell(e.shiftKey);
-          } else if (e.key === "Enter") {
-            e.currentTarget.blur();
           }
         }}
       />

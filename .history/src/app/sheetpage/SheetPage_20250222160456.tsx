@@ -2,31 +2,30 @@
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 "use client";
-import { TbLetterA, TbNumber1 } from "react-icons/tb";
-import { GoPlus, GoBell } from "react-icons/go";
+import { TbLetterA } from "react-icons/tb";
+import { TbNumber1 } from "react-icons/tb";
+import { GoPlus } from "react-icons/go";
 import { RxHamburgerMenu } from "react-icons/rx";
-import {
-  MdKeyboardArrowDown,
-  MdOutlineCheckBoxOutlineBlank,
-} from "react-icons/md";
-import {
-  CiViewTable,
-  CiSearch,
-  CiViewList,
-  CiTextAlignJustify,
-  CiUndo,
-} from "react-icons/ci";
-import { GrCircleQuestion } from "react-icons/gr";
+import { MdKeyboardArrowDown } from "react-icons/md";
+import { CiViewTable } from "react-icons/ci";
 import { FaRegEyeSlash } from "react-icons/fa";
-import { PiTextAlignCenterLight, PiPaintBucket } from "react-icons/pi";
+import { PiTextAlignCenterLight } from "react-icons/pi";
+import { CiSearch } from "react-icons/ci";
+import { CiViewList } from "react-icons/ci";
 import { HiArrowsUpDown } from "react-icons/hi2";
+import { PiPaintBucket } from "react-icons/pi";
+import { CiTextAlignJustify } from "react-icons/ci";
 import { BsBoxArrowUpRight } from "react-icons/bs";
+import { CiUndo } from "react-icons/ci";
 import { IoIosHelpCircleOutline } from "react-icons/io";
+import { GoBell } from "react-icons/go";
 import { IoPersonAddOutline } from "react-icons/io5";
 import { useSession } from "next-auth/react";
+import { MdOutlineCheckBoxOutlineBlank } from "react-icons/md";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { api } from "~/trpc/react";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { GrCircleQuestion } from "react-icons/gr";
 import {
   createColumnHelper,
   flexRender,
@@ -39,14 +38,14 @@ import type { JsonValue } from "next-auth/adapters";
 // some type declarations
 interface Table {
   headers: Array<{
-    id?: number; // check
+    id?: number;
     name: string;
     headerPosition: number;
     isPending?: boolean;
   }>;
   id: number;
   rows: {
-    id?: number; // check
+    id?: number;
     values: Record<string, string>;
     rowPosition: number;
     isPending?: boolean;
@@ -54,6 +53,23 @@ interface Table {
   }[];
 }
 
+interface Header {
+  id?: number;
+  name: string;
+  headerPosition: number;
+  isPending?: boolean;
+  tableId: number;
+}
+
+interface Row {
+  id?: number;
+  values: Record<string, string>;
+  rowPosition: number;
+  isPending?: boolean;
+  tableId: number;
+}
+
+// to be passed to cell object
 interface CellProps {
   info: {
     row: {
@@ -73,7 +89,6 @@ interface CellProps {
     headerPosition: number;
   };
 
-  // callback function for cell updates
   handleCellUpdate: (
     tableId: number,
     rowPosition: number,
@@ -81,10 +96,17 @@ interface CellProps {
     value: string,
     values: Record<string, string>,
   ) => void;
+  setActiveCell: (active: boolean) => void;
 }
 
-// changes to save on the next ctrl+s
-// position is unique for each table id
+type TableRow = {
+  id: number;
+  values: JsonValue;
+  tableId: number;
+  rowPosition: number;
+  createdAt: Date;
+};
+
 interface PendingChanges {
   headers: Record<
     number,
@@ -115,6 +137,7 @@ interface PendingChanges {
 
 export default function Sheet() {
   const utils = api.useUtils();
+  // user session
   const { data: session } = useSession();
 
   // get current URL (table id is there)
@@ -140,225 +163,77 @@ export default function Sheet() {
     rows: { updates: [], newRows: [] },
   });
 
-  const [tableData, setTableData] = useState<Table | undefined>(undefined);
-  // check if mutation is currently happening
-  const isMutating = useRef(false);
+  const Cell = ({
+    info,
+    headers,
+    handleCellUpdate,
+    setActiveCell,
+  }: CellProps) => {
+    // const rowId = info.row.original.id;
+    const rowPosition = info.row.original.rowPosition;
+    const [value, setValue] = useState(info.getValue() ?? "");
 
-  const [anchor, setAnchor] = useState<null | HTMLElement>(null);
-  const open = Boolean(anchor);
-
-  // input for new header
-  const [headerInput, setHeaderInput] = useState<string>("");
-
-  // tanstack
-  const columnHelper = createColumnHelper<any>();
-
-  // create a new table
-  const createTable = api.table.create.useMutation({
-    onSuccess: async (newTable) => {
-      // clear current table data
-      setTableData(undefined);
-
-      // clear pending changes
-      setPendingChanges({
-        headers: {},
-        rows: { updates: [], newRows: [] },
-      });
-
-      utils.sheet.findSheet.setData({ id: sheetId }, (old) => {
-        if (!old) return old;
-        return {
-          ...old,
-          tables: [
-            ...(old.tables ?? []),
-            {
-              ...newTable,
-              headers: [],
-              rows: [],
-            },
-          ],
-        };
-      });
-
-      const params = new URLSearchParams(searchParams);
-      params.set("table", newTable.id.toString());
-      router.push(`${pathname}?${params.toString()}`);
-    },
-  });
-
-  // add a new table
-  const handleAddTable = () => {
-    // create a new table with sheet ID
-    createTable.mutate({ sheetId: sheetId });
-  };
-
-  // cell component
-  const Cell = ({ info, headers, handleCellUpdate }: CellProps) => {
-    const [editingValue, setEditingValue] = useState(info.getValue() ?? "");
-    const inputRef = useRef<HTMLInputElement>(null);
-    const cellId = `cell-${info.row.original.rowPosition}-${headers.headerPosition}`;
-
+    // NOTE: use ROW POSITION
     useEffect(() => {
-      if (document.activeElement !== inputRef.current) {
-        setEditingValue(info.getValue() ?? "");
+      if (
+        document.activeElement !==
+        document.getElementById(
+          `cell-${info.row.original.rowPosition}-${headers.headerPosition}`,
+        )
+      ) {
+        setValue(info.getValue() ?? "");
       }
-    }, [info.getValue()]);
-
-    const handleSave = () => {
-      if (editingValue !== info.getValue()) {
-        handleCellUpdate(
-          info.row.original.tableId,
-          info.row.original.rowPosition,
-          headers.headerPosition,
-          editingValue,
-          info.row.original.values,
-        );
-      }
-    };
-
-    const focusNextCell = (reverse = false) => {
-      const allInputs = Array.from(
-        document.querySelectorAll('input[id^="cell-"]'),
-      );
-      const currentIndex = allInputs.indexOf(inputRef.current!);
-      const nextIndex = reverse ? currentIndex - 1 : currentIndex + 1;
-
-      if (nextIndex >= 0 && nextIndex < allInputs.length) {
-        (allInputs[nextIndex] as HTMLInputElement).focus();
-      }
-    };
+    }, [
+      info.getValue(),
+      info.row.original.rowPosition,
+      headers.headerPosition,
+    ]);
 
     return (
       <input
-        ref={inputRef}
-        id={cellId}
+        key={`cell-${info.row.original.rowPosition}-${headers.headerPosition}`}
+        id={`cell-${info.row.original.rowPosition}-${headers.headerPosition}`}
+        name={`cell-${info.row.original.rowPosition}-${headers.headerPosition}`}
         className="h-[30px] w-full cursor-text border-none bg-transparent outline-none focus:ring-2 focus:ring-blue-500"
-        value={editingValue}
-        onChange={(e) => setEditingValue(e.target.value)}
-        onBlur={handleSave}
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          lastActiveCellTime.current = Date.now();
+          setActiveCell(true);
+        }}
+        onFocus={() => {
+          setActiveCell(true);
+          lastActiveCellTime.current = Date.now();
+        }}
+        onBlur={() => {
+          setActiveCell(false);
+          if (value !== info.getValue()) {
+            handleCellUpdate(
+              info.row.original.tableId,
+              rowPosition,
+              headers.headerPosition,
+              value,
+              info.row.original.values,
+            );
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === "Tab") {
             e.preventDefault();
-            if (editingValue !== info.getValue()) {
-              handleCellUpdate(
-                info.row.original.tableId,
-                info.row.original.rowPosition,
-                headers.headerPosition,
-                editingValue,
-                info.row.original.values,
-              );
+            const allInputs = Array.from(
+              document.querySelectorAll('input[id^="cell-"]'),
+            );
+            const currentIndex = allInputs.indexOf(e.currentTarget);
+            const nextInput =
+              allInputs[e.shiftKey ? currentIndex - 1 : currentIndex + 1];
+            if (nextInput instanceof HTMLInputElement) {
+              nextInput.focus();
             }
-            focusNextCell(e.shiftKey);
-          } else if (e.key === "Enter") {
-            e.currentTarget.blur();
           }
         }}
       />
     );
   };
-
-  // initial table if none selected
-  // nav to correct url
-  useEffect(() => {
-    if (isMutating.current || selectedTableId) return;
-    if (sheetData?.tables && !selectedTableId) {
-      const firstTableId = sheetData.tables[0]?.id;
-      if (firstTableId) {
-        const params = new URLSearchParams(searchParams);
-        params.set("table", firstTableId.toString());
-        router.push(`${pathname}?${params.toString()}`);
-      }
-    }
-  }, [sheetData?.tables, selectedTableId, router, pathname, searchParams]);
-
-  // update the table data with the pending changes for UI
-  useEffect(() => {
-    if (!sheetData?.tables || !selectedTableId) return;
-
-    const selectedTable = sheetData.tables.find(
-      (t) => t.id === selectedTableId,
-    );
-    if (!selectedTable) return;
-
-    // merge server data with pending changes
-    const mergedTable: Table = {
-      ...selectedTable,
-      headers: [
-        ...selectedTable.headers.filter(
-          (h) =>
-            !pendingChanges.headers[selectedTableId]?.headers.some(
-              (ph) => ph.headerPosition === h.headerPosition,
-            ),
-        ),
-        ...(pendingChanges.headers[selectedTableId]?.headers ?? []),
-      ].sort((a, b) => a.headerPosition - b.headerPosition),
-      rows: [
-        ...selectedTable.rows.map((row) => {
-          const pendingUpdate = pendingChanges.rows.updates.find(
-            (u) => u.rowId === row.id,
-          );
-          return {
-            ...row,
-            values: pendingUpdate
-              ? {
-                  ...(row.values as Record<string, string>),
-                  ...pendingUpdate.values,
-                }
-              : (row.values as Record<string, string>),
-          };
-        }),
-        ...pendingChanges.rows.newRows,
-      ].sort((a, b) => a.rowPosition - b.rowPosition),
-    };
-
-    setTableData(mergedTable);
-  }, [sheetData, selectedTableId, pendingChanges]);
-
-  // switch to new url
-  const handleTableSelect = (tableId: number) => {
-    // clear pending changes when switching tables
-    setPendingChanges({
-      headers: {},
-      rows: { updates: [], newRows: [] },
-    });
-
-    const params = new URLSearchParams(searchParams);
-    params.set("table", tableId.toString());
-    router.push(`${pathname}?${params.toString()}`);
-  };
-
-  // batch update for rows (mutation)
-  const batchUpdate = api.row.batchUpdate.useMutation({
-    async onMutate() {
-      await utils.sheet.findSheet.cancel();
-      const prevData = utils.sheet.findSheet.getData({ id: sheetId });
-
-      utils.sheet.findSheet.setData({ id: sheetId }, (old) => {
-        if (!old) return old;
-
-        return {
-          ...old,
-          tables: old.tables.map((table) =>
-            table.id === tableData?.id
-              ? {
-                  ...table,
-                  rows: table.rows.map((row) => ({
-                    ...row,
-                    values: row.values as JsonValue,
-                    id: row.id,
-                    createdAt: row.createdAt,
-                    tableId: row.tableId,
-                    rowPosition: row.rowPosition,
-                  })),
-                }
-              : table,
-          ),
-        };
-      });
-
-      return { prevData };
-    },
-  });
 
   // MUTATION for adding new header with optimistic UI updates
   const addHeader = api.header.createMany.useMutation({
@@ -366,7 +241,6 @@ export default function Sheet() {
       await utils.sheet.findSheet.cancel();
       const prevData = utils.sheet.findSheet.getData({ id: sheetId });
 
-      // update the table data with the new header
       utils.sheet.findSheet.setData({ id: sheetId }, (old) => {
         if (!old) return old;
         const currentTable = old.tables.find((t) => t.id === tableId);
@@ -423,7 +297,148 @@ export default function Sheet() {
     },
   });
 
-  // save all changes
+  const [activeCell, setActiveCell] = useState(false);
+
+  // initial table if none selected
+  // nav to correct url
+  useEffect(() => {
+    if (isMutating.current) return;
+    console.log("useeffect for table data q");
+    if (sheetData?.tables && !selectedTableId) {
+      const firstTableId = sheetData.tables[0]?.id;
+      if (firstTableId) {
+        const params = new URLSearchParams(searchParams);
+        params.set("table", firstTableId.toString());
+        router.push(`${pathname}?${params.toString()}`);
+      }
+    }
+  }, [sheetData?.tables, selectedTableId, router, pathname, searchParams]);
+
+  // useEffect(() => {
+  //   if (!sheetData?.tables || !selectedTableId) return;
+
+  //   const selectedTable = sheetData.tables.find(
+  //     (t) => t.id === selectedTableId,
+  //   );
+  //   if (!selectedTable) return;
+
+  //   // Merge server data with pending changes
+  //   const mergedTable = {
+  //     ...selectedTable,
+  //     headers: [
+  //       ...selectedTable.headers.filter(
+  //         (h) =>
+  //           !pendingChanges.headers[selectedTableId]?.headers.some(
+  //             (ph) => ph.headerPosition === h.headerPosition,
+  //           ),
+  //       ),
+  //       ...(pendingChanges.headers[selectedTableId]?.headers ?? []),
+  //     ].sort((a, b) => a.headerPosition - b.headerPosition),
+
+  //     rows: [
+  //       // Existing rows with updates
+  //       ...selectedTable.rows.map((row) => {
+  //         const pendingUpdate = pendingChanges.rows.updates.find(
+  //           (u) => u.rowId === row.id,
+  //         );
+  //         return pendingUpdate ? { ...row, values: pendingUpdate.values } : row;
+  //       }),
+  //       // New rows
+  //       ...pendingChanges.rows.newRows.filter(
+  //         (nr) => nr.tableId === selectedTableId,
+  //       ),
+  //     ].sort((a, b) => a.rowPosition - b.rowPosition),
+  //   };
+
+  //   setTableData(mergedTable);
+  // }, [sheetData, selectedTableId, pendingChanges]);
+
+  // switch to new url
+  const handleTableSelect = (tableId: number) => {
+    // clear pending changes when switching tables
+    setPendingChanges({
+      headers: {},
+      rows: { updates: [], newRows: [] },
+    });
+
+    const params = new URLSearchParams(searchParams);
+    params.set("table", tableId.toString());
+    router.push(`${pathname}?${params.toString()}`);
+  };
+
+  const [tableData, setTableData] = useState<Table | undefined>(undefined);
+  const isMutating = useRef(false);
+
+  const batchUpdate = api.row.batchUpdate.useMutation({
+    async onMutate(variables) {
+      // console.log("=== Starting Mutation ===");
+      // console.log("TableData before mutation:", tableData);
+      // console.log("Variables:", variables);
+
+      await utils.sheet.findSheet.cancel();
+      const prevData = utils.sheet.findSheet.getData({ id: sheetId });
+      // console.log("Previous data:", prevData);
+
+      utils.sheet.findSheet.setData({ id: sheetId }, (old) => {
+        if (!old) return old;
+
+        // const table = old.tables.find((t) => t.id === tableData?.id);
+        // console.log("Found table:", table);
+
+        // console.log("Current table rows:", tableData?.rows);
+        // console.log("Incoming new rows:", variables.newRows);
+        // console.log("Incoming updates:", variables.updates);
+
+        const updatedRows = tableData?.rows
+          .filter(
+            (row) =>
+              !variables.newRows.some(
+                (nr) => nr.rowPosition === row.rowPosition,
+              ),
+          )
+          .map((row) => {
+            const update = variables.updates.find((u) => u.rowId === row.id);
+            return update
+              ? { ...row, values: { ...row.values, ...update.values } }
+              : row;
+          });
+
+        // console.log("After filtering and updates:", updatedRows);
+
+        const finalRows = [
+          ...(updatedRows ?? []),
+          ...variables.newRows.map((row) => ({
+            values: row.values as JsonValue,
+            tableId: tableData?.id ?? 0,
+            rowPosition: row.rowPosition,
+            createdAt: new Date(),
+          })),
+        ].sort((a, b) => a.rowPosition - b.rowPosition) as TableRow[];
+
+        // console.log("Final combined rows:", finalRows);
+
+        return {
+          ...old,
+          tables: old.tables.map((table) =>
+            table.id === tableData?.id
+              ? {
+                  ...table,
+                  rows: finalRows,
+                }
+              : table,
+          ),
+        };
+      });
+
+      return { prevData };
+    },
+    onError(err, newData, context) {
+      if (context?.prevData) {
+        utils.sheet.findSheet.setData({ id: sheetId }, context.prevData);
+      }
+    },
+  });
+
   const saveAllChanges = useCallback(async () => {
     if (!tableData?.id) return;
 
@@ -461,12 +476,13 @@ export default function Sheet() {
         await batchUpdate.mutateAsync(updatedPendingRows);
       }
 
-      await utils.sheet.findSheet.refetch();
       setPendingChanges({
         headers: {},
         rows: { updates: [], newRows: [] },
       });
       isMutating.current = false;
+
+      await utils.sheet.findSheet.invalidate();
     } catch (error) {
       console.error("Error saving changes:", error);
     }
@@ -478,7 +494,7 @@ export default function Sheet() {
     utils.sheet.findSheet,
   ]);
 
-  // save all changes on ctrl+s
+  // use useCallback for the handler
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -489,12 +505,18 @@ export default function Sheet() {
     [saveAllChanges],
   );
 
+  // attach the handler in useEffect
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  // add a new header
+  // input for new header
+  const [headerInput, setHeaderInput] = useState<string>("");
+
+  // TODO - necessary?
+  const lastActiveCellTime = useRef(Date.now());
+
   const handleHeaderAdd = (newHeader: { name: string }) => {
     if (!tableData?.id) return;
 
@@ -571,52 +593,46 @@ export default function Sheet() {
     }));
   };
 
-  const handleRowCreate = useCallback(() => {
-    if (!tableData?.id) return;
+  const createTable = api.table.create.useMutation({
+    onSuccess: async (newTable) => {
+      // clear current table data
+      setTableData(undefined);
 
-    // Get all current headers including pending ones
-    const allHeaders = [
-      ...tableData.headers.filter(
-        (header) =>
-          !pendingChanges.headers[tableData.id]?.headers.some(
-            (newHeader) => newHeader.headerPosition === header.headerPosition,
-          ),
-      ),
-      ...(pendingChanges.headers[tableData.id]?.headers ?? []),
-    ].sort((a, b) => a.headerPosition - b.headerPosition);
+      // clear pending changes
+      setPendingChanges({
+        headers: {},
+        rows: { updates: [], newRows: [] },
+      });
 
-    // Get all current rows including pending ones
-    const currentRows = [
-      ...tableData.rows,
-      ...pendingChanges.rows.newRows,
-    ].sort((a, b) => a.rowPosition - b.rowPosition);
+      utils.sheet.findSheet.setData({ id: sheetId }, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          tables: [
+            ...(old.tables ?? []),
+            {
+              ...newTable,
+              headers: [],
+              rows: [],
+            },
+          ],
+        };
+      });
 
-    const nextPosition =
-      currentRows.length > 0
-        ? Math.max(...currentRows.map((row) => row.rowPosition)) + 1
-        : 1;
+      const params = new URLSearchParams(searchParams);
+      params.set("table", newTable.id.toString());
+      router.push(`${pathname}?${params.toString()}`);
+    },
+  });
 
-    // Create new row with values for all headers
-    const newRow = {
-      values: Object.fromEntries(
-        allHeaders.map((header) => [header.headerPosition.toString(), ""]),
-      ),
-      rowPosition: nextPosition,
-      tableId: tableData.id,
-      isPending: true,
-    };
+  // add a new table
+  const handleAddTable = () => {
+    // create a new table with sheet ID
+    createTable.mutate({ sheetId: sheetId });
+  };
 
-    // update pending changes
-    setPendingChanges((prev) => ({
-      ...prev,
-      rows: {
-        ...prev.rows,
-        newRows: [...prev.rows.newRows, newRow].sort(
-          (a, b) => a.rowPosition - b.rowPosition,
-        ),
-      },
-    }));
-  }, [tableData?.id, tableData?.headers, pendingChanges.headers]);
+  // tanstack
+  const columnHelper = createColumnHelper<any>();
 
   // update a cell
   const handleCellUpdate = useCallback(
@@ -655,7 +671,7 @@ export default function Sheet() {
           },
         }));
       } else {
-        // update new row using position
+        // Update new row using position
         setPendingChanges((prev) => ({
           ...prev,
           rows: {
@@ -675,7 +691,61 @@ export default function Sheet() {
     [tableData],
   );
 
-  // caching columns for the table
+  // useMemo to cache values in between re-renders
+  // const columns = useMemo(() => {
+  //   if (!tableData?.headers || !tableData.id) return [];
+
+  //   // get unique headers by position
+  //   const allHeaders = Object.values(
+  //     [
+  //       ...tableData.headers.filter(
+  //         (header) =>
+  //           !pendingChanges.headers[tableData.id]?.headers.some(
+  //             (newHeader) => newHeader.headerPosition === header.headerPosition,
+  //           ),
+  //       ),
+  //       ...(pendingChanges.headers[tableData.id]?.headers ?? []),
+  //     ].reduce(
+  //       (acc, header) => {
+  //         acc[header.headerPosition] = {
+  //           ...header,
+  //           headerPosition: header.headerPosition,
+  //         };
+  //         return acc;
+  //       },
+  //       {} as Record<number, Header>,
+  //     ),
+  //   ).sort((a, b) => a.headerPosition - b.headerPosition);
+
+  //   // console.log("All headers before mapping:", allHeaders);
+
+  //   return allHeaders.map((header) => {
+  //     return columnHelper.accessor(
+  //       (row) => {
+  //         const value = row.values[header.headerPosition.toString()];
+  //         return value ?? "";
+  //       },
+  //       {
+  //         headerPosition: header.headerPosition.toString(),
+  //         header: () => header.name,
+  //         cell: (info) => (
+  //           <Cell
+  //             info={info}
+  //             headers={header}
+  //             handleCellUpdate={handleCellUpdate}
+  //             setActiveCell={setActiveCell}
+  //           />
+  //         ),
+  //       },
+  //     );
+  //   });
+  // }, [
+  //   tableData?.headers,
+  //   tableData?.id,
+  //   pendingChanges.headers,
+  //   handleCellUpdate,
+  // ]);
+
   const columns = useMemo(() => {
     if (!tableData?.headers || !tableData.id) return [];
 
@@ -700,6 +770,7 @@ export default function Sheet() {
               info={info}
               headers={{ ...header, tableId: tableData.id }}
               handleCellUpdate={handleCellUpdate}
+              setActiveCell={setActiveCell}
             />
           ),
         },
@@ -723,6 +794,63 @@ export default function Sheet() {
     getCoreRowModel: getCoreRowModel(),
     enableRowSelection: true,
   });
+
+  const [anchor, setAnchor] = useState<null | HTMLElement>(null);
+  const open = Boolean(anchor);
+
+  // TODO - necessary?
+  useEffect(() => {
+    if (activeCell) {
+      lastActiveCellTime.current = Date.now();
+    }
+  }, [activeCell]);
+
+  const handleRowCreate = useCallback(() => {
+    if (!tableData?.id) return;
+
+    // Get all current headers including pending ones
+    const allHeaders = [
+      ...tableData.headers.filter(
+        (header) =>
+          !pendingChanges.headers[tableData.id]?.headers.some(
+            (newHeader) => newHeader.headerPosition === header.headerPosition,
+          ),
+      ),
+      ...(pendingChanges.headers[tableData.id]?.headers ?? []),
+    ].sort((a, b) => a.headerPosition - b.headerPosition);
+
+    // Get all current rows including pending ones
+    const currentRows = [
+      ...tableData.rows,
+      ...pendingChanges.rows.newRows,
+    ].sort((a, b) => a.rowPosition - b.rowPosition);
+
+    const nextPosition =
+      currentRows.length > 0
+        ? Math.max(...currentRows.map((row) => row.rowPosition)) + 1
+        : 1;
+
+    // Create new row with values for all headers
+    const newRow = {
+      values: Object.fromEntries(
+        allHeaders.map((header) => [header.headerPosition.toString(), ""]),
+      ),
+      rowPosition: nextPosition,
+      tableId: tableData.id,
+      isPending: true,
+    };
+
+    // Update pending changes
+    setPendingChanges((prev) => ({
+      ...prev,
+      rows: {
+        ...prev.rows,
+        newRows: [...prev.rows.newRows, newRow].sort(
+          (a, b) => a.rowPosition - b.rowPosition,
+        ),
+      },
+    }));
+  }, [tableData?.id, tableData?.headers, pendingChanges.headers]);
 
   return (
     <div className="flex h-screen flex-col">

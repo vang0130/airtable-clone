@@ -81,6 +81,7 @@ interface CellProps {
     value: string,
     values: Record<string, string>,
   ) => void;
+  // setActiveCell: (active: boolean) => void;
 }
 
 // changes to save on the next ctrl+s
@@ -140,6 +141,7 @@ export default function Sheet() {
     rows: { updates: [], newRows: [] },
   });
 
+  // const [activeCell, setActiveCell] = useState(false);
   const [tableData, setTableData] = useState<Table | undefined>(undefined);
   // check if mutation is currently happening
   const isMutating = useRef(false);
@@ -153,7 +155,6 @@ export default function Sheet() {
   // tanstack
   const columnHelper = createColumnHelper<any>();
 
-  // create a new table
   const createTable = api.table.create.useMutation({
     onSuccess: async (newTable) => {
       // clear current table data
@@ -193,11 +194,20 @@ export default function Sheet() {
   };
 
   // cell component
-  const Cell = ({ info, headers, handleCellUpdate }: CellProps) => {
+  const Cell = ({
+    info,
+    headers,
+    handleCellUpdate,
+    // setActiveCell,
+  }: CellProps) => {
+    // state for the cell value
     const [editingValue, setEditingValue] = useState(info.getValue() ?? "");
+    // ref for the input element
     const inputRef = useRef<HTMLInputElement>(null);
+    // id for the cell
     const cellId = `cell-${info.row.original.rowPosition}-${headers.headerPosition}`;
 
+    // only update the editing value when the cell data changes and we're not focused
     useEffect(() => {
       if (document.activeElement !== inputRef.current) {
         setEditingValue(info.getValue() ?? "");
@@ -205,7 +215,9 @@ export default function Sheet() {
     }, [info.getValue()]);
 
     const handleSave = () => {
+      // setActiveCell(false);
       if (editingValue !== info.getValue()) {
+        // just update pendingChanges, don't trigger mutation
         handleCellUpdate(
           info.row.original.tableId,
           info.row.original.rowPosition,
@@ -216,40 +228,32 @@ export default function Sheet() {
       }
     };
 
-    const focusNextCell = (reverse = false) => {
-      const allInputs = Array.from(
-        document.querySelectorAll('input[id^="cell-"]'),
-      );
-      const currentIndex = allInputs.indexOf(inputRef.current!);
-      const nextIndex = reverse ? currentIndex - 1 : currentIndex + 1;
-
-      if (nextIndex >= 0 && nextIndex < allInputs.length) {
-        (allInputs[nextIndex] as HTMLInputElement).focus();
-      }
-    };
-
     return (
       <input
         ref={inputRef}
         id={cellId}
         className="h-[30px] w-full cursor-text border-none bg-transparent outline-none focus:ring-2 focus:ring-blue-500"
         value={editingValue}
-        onChange={(e) => setEditingValue(e.target.value)}
+        onChange={(e) => {
+          setEditingValue(e.target.value);
+          // setActiveCell(true);
+        }}
+        // onFocus={() => setActiveCell(true)}
         onBlur={handleSave}
         onKeyDown={(e) => {
           if (e.key === "Tab") {
             e.preventDefault();
-            if (editingValue !== info.getValue()) {
-              handleCellUpdate(
-                info.row.original.tableId,
-                info.row.original.rowPosition,
-                headers.headerPosition,
-                editingValue,
-                info.row.original.values,
-              );
+            const allInputs = Array.from(
+              document.querySelectorAll('input[id^="cell-"]'),
+            );
+            const currentIndex = allInputs.indexOf(e.currentTarget);
+            const nextInput =
+              allInputs[e.shiftKey ? currentIndex - 1 : currentIndex + 1];
+            if (nextInput instanceof HTMLInputElement) {
+              nextInput.focus();
             }
-            focusNextCell(e.shiftKey);
           } else if (e.key === "Enter") {
+            handleSave();
             e.currentTarget.blur();
           }
         }}
@@ -271,7 +275,7 @@ export default function Sheet() {
     }
   }, [sheetData?.tables, selectedTableId, router, pathname, searchParams]);
 
-  // update the table data with the pending changes for UI
+  // update the table data with the pending changes
   useEffect(() => {
     if (!sheetData?.tables || !selectedTableId) return;
 
@@ -327,9 +331,8 @@ export default function Sheet() {
     router.push(`${pathname}?${params.toString()}`);
   };
 
-  // batch update for rows (mutation)
   const batchUpdate = api.row.batchUpdate.useMutation({
-    async onMutate() {
+    async onMutate(variables) {
       await utils.sheet.findSheet.cancel();
       const prevData = utils.sheet.findSheet.getData({ id: sheetId });
 
@@ -606,7 +609,7 @@ export default function Sheet() {
       isPending: true,
     };
 
-    // update pending changes
+    // Update pending changes
     setPendingChanges((prev) => ({
       ...prev,
       rows: {
@@ -617,7 +620,6 @@ export default function Sheet() {
       },
     }));
   }, [tableData?.id, tableData?.headers, pendingChanges.headers]);
-
   // update a cell
   const handleCellUpdate = useCallback(
     (
@@ -655,7 +657,7 @@ export default function Sheet() {
           },
         }));
       } else {
-        // update new row using position
+        // Update new row using position
         setPendingChanges((prev) => ({
           ...prev,
           rows: {
@@ -675,7 +677,6 @@ export default function Sheet() {
     [tableData],
   );
 
-  // caching columns for the table
   const columns = useMemo(() => {
     if (!tableData?.headers || !tableData.id) return [];
 
@@ -700,6 +701,7 @@ export default function Sheet() {
               info={info}
               headers={{ ...header, tableId: tableData.id }}
               handleCellUpdate={handleCellUpdate}
+              // setActiveCell={setActiveCell}
             />
           ),
         },

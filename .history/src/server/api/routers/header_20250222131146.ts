@@ -46,8 +46,8 @@ export const headerRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       return ctx.db.header.findMany({
         where: { tableId: input.tableId },
-        select: { id: true, name: true, headerPosition: true },
-        orderBy: { headerPosition: "asc" },
+        select: { id: true, name: true, position: true },
+        orderBy: { position: "asc" },
       });
     }),
 });
