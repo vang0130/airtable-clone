@@ -153,6 +153,9 @@ export default function Sheet() {
   // tanstack
   const columnHelper = createColumnHelper<any>();
 
+  // saving indicator
+  const [isSaving, setIsSaving] = useState(false);
+
   // create a new table
   const createTable = api.table.create.useMutation({
     onSuccess: async (newTable) => {
@@ -428,6 +431,7 @@ export default function Sheet() {
     if (!tableData?.id) return;
 
     try {
+      setIsSaving(true);
       await utils.sheet.findSheet.cancel();
       if (Object.keys(pendingChanges.headers).length > 0) {
         const entries = Object.entries(pendingChanges.headers);
@@ -467,8 +471,11 @@ export default function Sheet() {
         rows: { updates: [], newRows: [] },
       });
       isMutating.current = false;
+      setIsSaving(false);
     } catch (error) {
       console.error("Error saving changes:", error);
+      setIsSaving(false);
+      isMutating.current = false;
     }
   }, [
     tableData?.id,
@@ -772,6 +779,11 @@ export default function Sheet() {
           </button>
         </div>
         <div className="ml-auto flex flex-row items-center justify-between gap-2">
+          {isSaving && (
+            <div className="flex h-[28px] flex-col items-center justify-center rounded-2xl px-3">
+              <span className="text-xs text-white">Saving...</span>
+            </div>
+          )}
           <button className="mx-[2px] hidden h-[28px] items-center justify-center rounded-2xl px-3 hover:bg-[#783566] sm:flex">
             <CiUndo className="h-4 w-4 text-white" />
           </button>
