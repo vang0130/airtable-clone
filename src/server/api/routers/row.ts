@@ -43,43 +43,54 @@ export const rowRouter = createTRPCRouter({
       z.object({
         updates: z.array(
           z.object({
-            // use db id to update
             rowId: z.number(),
+            tableId: z.number(),
+            rowPosition: z.number(),
             values: z.record(z.string()),
-          })
+          }),
         ),
         newRows: z.array(
           z.object({
             tableId: z.number(),
             values: z.record(z.string()),
-            // pass in position once, only on creation
-            rowPosition: z.number(), 
-          })
+            rowPosition: z.number(),
+          }),
         ),
-      })
+      }),
     )
     .mutation(async ({ ctx, input }) => {
-      return ctx.db.$transaction(async (tx) => {
-        const updatePromises = input.updates.map((update) =>
-          tx.row.update({
-            where: { id: update.rowId },
-            data: { values: update.values },
-            select: { id: true, values: true, rowPosition: true }
-          })
-        );
+      await ctx.db.$transaction(async (tx) => {
+        if (input.updates.length > 0) {
+          const BATCH_SIZE = 1000;
+          for (let i = 0; i < input.updates.length; i += BATCH_SIZE) {
+            const batch = input.updates.slice(i, i + BATCH_SIZE);
+            const placeholders = batch
+              .map((_, index) => `($${index * 2 + 1}::integer, $${index * 2 + 2}::jsonb)`)
+              .join(',');
+            
+            const values = batch.flatMap(update => [
+              update.rowId,
+              JSON.stringify(update.values)
+            ]);
 
-        const newRows = await Promise.all(
-          input.newRows.map(({ tableId, values, rowPosition }) =>
-            tx.row.create({
-              data: { tableId, values, rowPosition },
-              select: { id: true, values: true, rowPosition: true }
-            })
-          )
-        );
+            await tx.$executeRawUnsafe(
+              `UPDATE "Row" AS r
+               SET "values" = c.values
+               FROM (VALUES ${placeholders}) AS c(id, values)
+               WHERE r.id = c.id`,
+              ...values
+            );
+          }
+        }
 
-        const updatedRows = await Promise.all(updatePromises);
-
-        return { updatedRows, newRows };
+        // Handle new rows
+        if (input.newRows.length > 0) {
+          await tx.row.createMany({
+            data: input.newRows,
+          });
+        }
       });
+
+      return { success: true };
     }),
 });

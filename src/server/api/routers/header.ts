@@ -22,18 +22,22 @@ export const headerRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       return ctx.db.$transaction(async (tx) => {
-        const headers = await Promise.all(
-          input.headers.map(async (h) => {
-            return tx.header.create({
-              data: {
-                name: h.name,
-                tableId: input.tableId,
-                headerPosition: h.headerPosition,
-              }
-            });
-          })
-        );
-        return headers;
+        await tx.header.createMany({
+          data: input.headers.map((h) => ({
+            name: h.name,
+            tableId: input.tableId,
+            headerPosition: h.headerPosition,
+          })),
+        });
+        
+        return tx.header.findMany({
+          where: {
+            tableId: input.tableId,
+            headerPosition: {
+              in: input.headers.map(h => h.headerPosition)
+            }
+          }
+        });
       });
     }),
 

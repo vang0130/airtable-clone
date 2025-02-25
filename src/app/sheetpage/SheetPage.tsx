@@ -113,6 +113,13 @@ interface PendingChanges {
   };
 }
 
+interface View {
+  id: number;
+  name: string;
+  rowOrder: number[];
+  tableId: number;
+}
+
 export default function Sheet() {
   const utils = api.useUtils();
   const { data: session } = useSession();
@@ -144,8 +151,14 @@ export default function Sheet() {
   // check if mutation is currently happening
   const isMutating = useRef(false);
 
-  const [anchor, setAnchor] = useState<null | HTMLElement>(null);
-  const open = Boolean(anchor);
+  const [headerInputAnchor, setHeaderInputAnchor] =
+    useState<null | HTMLElement>(null);
+  const headerInputOpen = Boolean(headerInputAnchor);
+
+  const [viewInputAnchor, setViewInputAnchor] = useState<null | HTMLElement>(
+    null,
+  );
+  const viewInputOpen = Boolean(viewInputAnchor);
 
   // input for new header
   const [headerInput, setHeaderInput] = useState<string>("");
@@ -155,6 +168,23 @@ export default function Sheet() {
 
   // saving indicator
   const [isSaving, setIsSaving] = useState(false);
+
+  // infinite scrolling
+  const [rowsToShow, setRowsToShow] = useState(50);
+  const ROWS_PER_LOAD = 50;
+
+  const [viewsMenuOpen, setViewsMenuOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const [savingView, setSavingView] = useState(false);
+  type SortDirection = "desc" | "asc" | null;
+  interface SortConfig {
+    columnId: string;
+    direction: SortDirection;
+    priority: number;
+  }
+
+  // current sort config
+  const [sortConfigs, setSortConfigs] = useState<SortConfig[]>([]);
 
   // create a new table
   const createTable = api.table.create.useMutation({
@@ -205,7 +235,7 @@ export default function Sheet() {
       if (document.activeElement !== inputRef.current) {
         setEditingValue(info.getValue() ?? "");
       }
-    }, [info.getValue()]);
+    }, [info]);
 
     const handleSave = () => {
       if (editingValue !== info.getValue()) {
@@ -426,18 +456,21 @@ export default function Sheet() {
     },
   });
 
-  // save all changes
+  const BATCH_SIZE = 5000;
+
   const saveAllChanges = useCallback(async () => {
     if (!tableData?.id) return;
 
+    console.log(pendingChanges);
     try {
       setIsSaving(true);
       await utils.sheet.findSheet.cancel();
+
+      // handle headers first (assuming this is relatively small)
       if (Object.keys(pendingChanges.headers).length > 0) {
         const entries = Object.entries(pendingChanges.headers);
         const headerData = entries[0]?.[1];
         if (headerData) {
-          isMutating.current = true;
           await addHeader.mutateAsync({
             tableId: headerData.tableId,
             headers: headerData.headers.map((h) => ({
@@ -446,23 +479,26 @@ export default function Sheet() {
             })),
           });
         }
-
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
 
-      const updatedPendingRows = {
-        updates: pendingChanges.rows.updates.map((update) => ({
-          rowId: update.rowId,
-          values: update.values,
-        })),
-        newRows: pendingChanges.rows.newRows,
-      };
+      // handle row updates in batches
+      const { updates, newRows } = pendingChanges.rows;
 
-      if (
-        updatedPendingRows.updates.length > 0 ||
-        updatedPendingRows.newRows.length > 0
-      ) {
-        await batchUpdate.mutateAsync(updatedPendingRows);
+      for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+        const batchUpdates = updates.slice(i, i + BATCH_SIZE);
+        await batchUpdate.mutateAsync({
+          updates: batchUpdates,
+          newRows: [],
+        });
+      }
+
+      for (let i = 0; i < newRows.length; i += BATCH_SIZE) {
+        const batchNewRows = newRows.slice(i, i + BATCH_SIZE);
+        await batchUpdate.mutateAsync({
+          updates: [],
+          newRows: batchNewRows,
+        });
       }
 
       await utils.sheet.findSheet.refetch();
@@ -470,12 +506,11 @@ export default function Sheet() {
         headers: {},
         rows: { updates: [], newRows: [] },
       });
-      isMutating.current = false;
-      setIsSaving(false);
     } catch (error) {
       console.error("Error saving changes:", error);
       setIsSaving(false);
-      isMutating.current = false;
+    } finally {
+      setIsSaving(false);
     }
   }, [
     tableData?.id,
@@ -527,22 +562,25 @@ export default function Sheet() {
       return;
     }
 
-    setPendingChanges((prev) => ({
-      ...prev,
-      headers: {
-        [tableData.id]: {
-          tableId: tableData.id,
-          headers: [
-            ...(prev.headers[tableData.id]?.headers ?? []),
-            {
-              name: newHeader.name,
-              headerPosition: nextPosition,
-              isPending: true,
-            },
-          ].sort((a, b) => a.headerPosition - b.headerPosition),
+    setPendingChanges((prev) => {
+      const newState = {
+        ...prev,
+        headers: {
+          [tableData.id]: {
+            tableId: tableData.id,
+            headers: [
+              ...(prev.headers[tableData.id]?.headers ?? []),
+              {
+                name: newHeader.name,
+                headerPosition: nextPosition,
+                isPending: true,
+              },
+            ].sort((a, b) => a.headerPosition - b.headerPosition),
+          },
         },
-      },
-    }));
+      };
+      return newState;
+    });
 
     // after adding header, update rows
     updateRowsForNewHeader(nextPosition);
@@ -552,36 +590,60 @@ export default function Sheet() {
   const updateRowsForNewHeader = (headerPosition: number) => {
     if (!tableData?.id) return;
 
-    setPendingChanges((prev) => ({
-      ...prev,
-      rows: {
-        updates: prev.rows.updates
-          .map((update) => ({
-            ...update,
-            values: {
-              ...update.values,
-              [headerPosition.toString()]: "",
-            },
-          }))
-          .sort((a, b) => a.rowPosition - b.rowPosition),
+    setPendingChanges((prev) => {
+      // existing rows that aren't in pendingChanges yet
+      const existingRowUpdates = tableData.rows
+        .filter(
+          (row) =>
+            !prev.rows.updates.some((update) => update.rowId === row.id) &&
+            !prev.rows.newRows.some(
+              (newRow) => newRow.rowPosition === row.rowPosition,
+            ),
+        )
+        .map((row) => ({
+          rowId: row.id!,
+          tableId: tableData.id,
+          rowPosition: row.rowPosition,
+          values: {
+            ...row.values,
+            [headerPosition.toString()]: "",
+          },
+        }));
 
-        newRows: prev.rows.newRows
-          .map((row) => ({
-            ...row,
-            values: {
-              ...row.values,
-              [headerPosition.toString()]: "",
-            },
-          }))
-          .sort((a, b) => a.rowPosition - b.rowPosition),
-      },
-    }));
+      // existing pending updates
+      const updatedPendingUpdates = prev.rows.updates.map((update) => ({
+        ...update,
+        values: {
+          ...update.values,
+          [headerPosition.toString()]: "",
+        },
+      }));
+
+      // update any new rows
+      const updatedNewRows = prev.rows.newRows.map((row) => ({
+        ...row,
+        values: {
+          ...row.values,
+          [headerPosition.toString()]: "",
+        },
+      }));
+
+      return {
+        ...prev,
+        rows: {
+          updates: [...existingRowUpdates, ...updatedPendingUpdates].sort(
+            (a, b) => a.rowPosition - b.rowPosition,
+          ),
+          newRows: updatedNewRows.sort((a, b) => a.rowPosition - b.rowPosition),
+        },
+      };
+    });
   };
 
   const handleRowCreate = useCallback(() => {
     if (!tableData?.id) return;
 
-    // Get all current headers including pending ones
+    // all current headers including pending ones
     const allHeaders = [
       ...tableData.headers.filter(
         (header) =>
@@ -592,7 +654,7 @@ export default function Sheet() {
       ...(pendingChanges.headers[tableData.id]?.headers ?? []),
     ].sort((a, b) => a.headerPosition - b.headerPosition);
 
-    // Get all current rows including pending ones
+    // get all current rows including pending ones
     const currentRows = [
       ...tableData.rows,
       ...pendingChanges.rows.newRows,
@@ -603,7 +665,7 @@ export default function Sheet() {
         ? Math.max(...currentRows.map((row) => row.rowPosition)) + 1
         : 1;
 
-    // Create new row with values for all headers
+    // create new row with values for all headers
     const newRow = {
       values: Object.fromEntries(
         allHeaders.map((header) => [header.headerPosition.toString(), ""]),
@@ -682,6 +744,154 @@ export default function Sheet() {
     [tableData],
   );
 
+  // create a "view" of a particular table
+  const createView = api.view.create.useMutation({
+    async onMutate({}) {
+      await utils.sheet.findSheet.cancel();
+      const prevData = utils.sheet.findSheet.getData({ id: sheetId });
+
+      return { prevData };
+    },
+    onError(err, newData, context) {
+      if (context?.prevData) {
+        utils.sheet.findSheet.setData({ id: sheetId }, context.prevData);
+      }
+    },
+  });
+
+  // get all views for a table
+  const { data: views, refetch: refetchViews } = api.view.getViews.useQuery(
+    { tableId: tableData?.id ?? 0 },
+    { enabled: !!tableData?.id },
+  );
+
+  // save a view
+  const handleViewSave = async () => {
+    if (!tableData?.id) return;
+
+    try {
+      setSavingView(true);
+
+      // save any pending changes
+      if (
+        Object.keys(pendingChanges.headers).length > 0 ||
+        pendingChanges.rows.updates.length > 0 ||
+        pendingChanges.rows.newRows.length > 0
+      ) {
+        await saveAllChanges();
+      }
+
+      // get current row order after changes are saved
+      const currentOrder = table
+        .getRowModel()
+        .rows.map((row) => row.original.rowPosition);
+
+      const newView = await createView.mutateAsync({
+        name: viewName,
+        tableId: tableData.id,
+        rowOrder: currentOrder,
+        // sortConfig,
+      });
+
+      // refetch views after successful creation
+      await refetchViews();
+
+      setViewName("");
+      setViewInputAnchor(null);
+
+      // navigate to the new view
+      const params = new URLSearchParams(searchParams);
+      params.set("view", newView.id.toString());
+      router.push(`${pathname}?${params.toString()}`);
+    } catch (error) {
+      console.error("Error saving view:", error);
+      setSavingView(false);
+    } finally {
+      setSavingView(false);
+    }
+  };
+
+  const handleViewSelect = (viewId: number | null) => {
+    setSortConfigs([]); // clear all sorts
+    const params = new URLSearchParams(searchParams);
+    if (viewId) {
+      params.set("view", viewId.toString());
+    } else {
+      params.delete("view");
+    }
+    router.push(`${pathname}?${params.toString()}`);
+    setViewsMenuOpen(false);
+  };
+
+  const sortRows = (rows: any[], configs: SortConfig[]) => {
+    // if no sort, keep original order
+    if (configs.length === 0) return rows;
+
+    // sort by priority (lowest/earliest first)
+    const orderedConfigs = [...configs].sort((a, b) => a.priority - b.priority);
+
+    // if only one sort
+    if (configs.length === 1) {
+      return [...rows].sort((a, b) => {
+        const config = orderedConfigs[0];
+        const aValue = a.values[config?.columnId ?? ""] ?? "";
+        const bValue = b.values[config?.columnId ?? ""] ?? "";
+
+        if (!isNaN(aValue) && !isNaN(bValue)) {
+          const comparison = Number(aValue) - Number(bValue);
+          return config?.direction === "asc" ? comparison : -comparison;
+        }
+        const comparison = aValue.toString().localeCompare(bValue.toString());
+        return config?.direction === "asc" ? comparison : -comparison;
+      });
+    }
+
+    // if two sorts
+    const primarySort = orderedConfigs[0];
+    const secondarySort = orderedConfigs[1];
+
+    // group rows by primary sort value
+    const groups = new Map<string, typeof rows>();
+    rows.forEach((row) => {
+      const value = row.values[primarySort?.columnId ?? ""] ?? "";
+      if (!groups.has(value)) {
+        groups.set(value, []);
+      }
+      groups.get(value)!.push(row);
+    });
+
+    // sort each group by secondary sort
+    const sortedRows: typeof rows = [];
+    [...groups.entries()]
+      .sort(([a], [b]) => {
+        if (!isNaN(Number(a)) && !isNaN(Number(b))) {
+          const comparison = Number(a) - Number(b);
+          return primarySort?.direction === "asc" ? comparison : -comparison;
+        }
+        const comparison = a.toString().localeCompare(b.toString());
+        return primarySort?.direction === "asc" ? comparison : -comparison;
+      })
+      .forEach(([_, groupRows]) => {
+        // sort within group by secondary sort
+        groupRows.sort((a, b) => {
+          const aValue = a.values[secondarySort?.columnId ?? ""] ?? "";
+          const bValue = b.values[secondarySort?.columnId ?? ""] ?? "";
+
+          if (!isNaN(aValue) && !isNaN(bValue)) {
+            const comparison = Number(aValue) - Number(bValue);
+            return secondarySort?.direction === "asc"
+              ? comparison
+              : -comparison;
+          }
+          const comparison = aValue.toString().localeCompare(bValue.toString());
+          return secondarySort?.direction === "asc" ? comparison : -comparison;
+        });
+        sortedRows.push(...groupRows);
+      });
+
+    return sortedRows;
+  };
+
   // caching columns for the table
   const columns = useMemo(() => {
     if (!tableData?.headers || !tableData.id) return [];
@@ -701,7 +911,64 @@ export default function Sheet() {
         (row) => row.values[header.headerPosition.toString()] ?? "",
         {
           id: header.headerPosition.toString(),
-          header: () => header.name,
+          header: () => (
+            <div className="flex h-[30px] w-full flex-row items-center justify-between">
+              <div className="flex items-center">
+                <TbLetterA className="mr-2 h-4 w-4" />
+                {header.name}
+              </div>
+              <button
+                onClick={() => {
+                  const columnId = header.headerPosition.toString();
+                  const existingSort = sortConfigs.find(
+                    (s) => s.columnId === columnId,
+                  );
+                  const maxPriority = Math.max(
+                    ...sortConfigs.map((s) => s.priority),
+                    0,
+                  );
+
+                  if (!existingSort) {
+                    // add new sort
+                    setSortConfigs([
+                      ...sortConfigs,
+                      {
+                        columnId,
+                        direction: "desc",
+                        priority: maxPriority + 1,
+                      },
+                    ]);
+                  } else {
+                    // update existing sort
+                    setSortConfigs(
+                      sortConfigs
+                        .map((sort) => {
+                          if (sort.columnId === columnId) {
+                            // toggle direction or remove if already asc
+                            if (sort.direction === "desc") {
+                              return { ...sort, direction: "asc" };
+                            } else {
+                              return null; // remove this sort
+                            }
+                          }
+                          return sort;
+                        })
+                        .filter((sort): sort is SortConfig => sort !== null),
+                    );
+                  }
+                }}
+                className="ml-2 rounded px-1 hover:bg-gray-200"
+              >
+                {(() => {
+                  const sort = sortConfigs.find(
+                    (s) => s.columnId === header.headerPosition.toString(),
+                  );
+                  if (!sort) return "↕";
+                  return `${sort.direction === "desc" ? "↓" : "↑"}${sort.priority}`;
+                })()}
+              </button>
+            </div>
+          ),
           cell: (info) => (
             <Cell
               info={info}
@@ -717,19 +984,147 @@ export default function Sheet() {
     tableData?.id,
     pendingChanges.headers,
     handleCellUpdate,
+    sortConfigs,
   ]);
 
   const table = useReactTable({
     data: useMemo(() => {
-      const sortedRows = [...(tableData?.rows ?? [])].sort(
-        (a, b) => a.rowPosition - b.rowPosition,
+      if (!tableData?.rows) return [];
+
+      // get existing rows that aren't in pendingChanges
+      const existingRows = tableData.rows.filter(
+        (row) =>
+          !pendingChanges.rows.updates.some(
+            (update) => update.rowId === row.id,
+          ) &&
+          !pendingChanges.rows.newRows.some(
+            (newRow) => newRow.rowPosition === row.rowPosition,
+          ),
       );
-      return sortedRows;
-    }, [tableData?.rows]),
+
+      // combine with pending updates and new rows
+      let allRows = [
+        ...existingRows,
+        ...pendingChanges.rows.updates.map((update) => ({
+          ...update,
+          id: update.rowId,
+          tableId: update.tableId,
+          values: update.values,
+        })),
+        ...pendingChanges.rows.newRows,
+      ];
+
+      const viewId = searchParams.get("view")
+        ? parseInt(searchParams.get("view")!)
+        : null;
+
+      if (viewId && views) {
+        const view = views.find((v) => v.id === viewId);
+        if (view?.rowOrder) {
+          allRows = view.rowOrder
+            .map((position) =>
+              allRows.find((row) => row.rowPosition === position),
+            )
+            .filter((row): row is (typeof allRows)[0] => !!row);
+        }
+      } else if (sortConfigs.length > 0) {
+        // Apply multi-column sort if no view is selected
+        allRows = sortRows(allRows, sortConfigs);
+      } else {
+        // default sorting by rowPosition
+        allRows.sort((a, b) => a.rowPosition - b.rowPosition);
+      }
+
+      return allRows.slice(0, rowsToShow);
+    }, [
+      tableData?.rows,
+      pendingChanges.rows.updates,
+      pendingChanges.rows.newRows,
+      rowsToShow,
+      searchParams,
+      views,
+      sortConfigs,
+    ]),
     columns,
     getCoreRowModel: getCoreRowModel(),
     enableRowSelection: true,
   });
+
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+      const bottomReached = scrollHeight - scrollTop <= clientHeight * 1.5;
+
+      console.log({
+        scrollTop,
+        scrollHeight,
+        clientHeight,
+        bottomReached,
+        currentRowsShown: rowsToShow,
+        totalRows:
+          (tableData?.rows?.length ?? 0) + pendingChanges.rows.newRows.length,
+      });
+
+      if (bottomReached) {
+        const totalRows =
+          (tableData?.rows?.length ?? 0) + pendingChanges.rows.newRows.length;
+        setRowsToShow((prev) => Math.min(prev + ROWS_PER_LOAD, totalRows));
+      }
+    },
+    [tableData?.rows?.length, pendingChanges.rows.newRows.length],
+  );
+
+  const handleBulkRowCreate = useCallback(() => {
+    if (!tableData?.id) return;
+
+    // get all current headers including pending ones
+    const allHeaders = [
+      ...tableData.headers.filter(
+        (header) =>
+          !pendingChanges.headers[tableData.id]?.headers.some(
+            (newHeader) => newHeader.headerPosition === header.headerPosition,
+          ),
+      ),
+      ...(pendingChanges.headers[tableData.id]?.headers ?? []),
+    ].sort((a, b) => a.headerPosition - b.headerPosition);
+
+    // get all current rows including pending ones
+    const currentRows = [
+      ...tableData.rows,
+      ...pendingChanges.rows.newRows,
+    ].sort((a, b) => a.rowPosition - b.rowPosition);
+
+    const startPosition =
+      currentRows.length > 0
+        ? Math.max(...currentRows.map((row) => row.rowPosition)) + 1
+        : 1;
+
+    // create 15000 new rows
+    const newRows = Array.from({ length: 15000 }, (_, index) => ({
+      values: Object.fromEntries(
+        allHeaders.map((header) => [header.headerPosition.toString(), ""]),
+      ),
+      rowPosition: startPosition + index,
+      tableId: tableData.id,
+      isPending: true,
+    }));
+
+    // update pending changes
+    setPendingChanges((prev) => ({
+      ...prev,
+      rows: {
+        ...prev.rows,
+        newRows: [...prev.rows.newRows, ...newRows].sort(
+          (a, b) => a.rowPosition - b.rowPosition,
+        ),
+      },
+    }));
+  }, [
+    tableData?.id,
+    tableData?.headers,
+    pendingChanges.headers,
+    pendingChanges.rows.newRows,
+  ]);
 
   return (
     <div className="flex h-screen flex-col">
@@ -781,9 +1176,56 @@ export default function Sheet() {
         <div className="ml-auto flex flex-row items-center justify-between gap-2">
           {isSaving && (
             <div className="flex h-[28px] flex-col items-center justify-center rounded-2xl px-3">
-              <span className="text-xs text-white">Saving...</span>
+              <span className="text-xs text-white">Saving data...</span>
             </div>
           )}
+          {savingView && (
+            <div className="flex h-[28px] flex-col items-center justify-center rounded-2xl px-3">
+              <span className="text-xs text-white">Saving view...</span>
+            </div>
+          )}
+          <button
+            onClick={handleBulkRowCreate}
+            className="mr-2 hidden h-[28px] items-center justify-center rounded-full border-white bg-white px-3 text-[#783566] sm:flex"
+          >
+            <p className="text-xs">Add 15K Rows</p>
+          </button>
+          <button
+            // onClick={handleBulkRowCreate}
+            onClick={(e) =>
+              setViewInputAnchor(viewInputAnchor ? null : e.currentTarget)
+            }
+            className="mr-2 hidden h-[28px] items-center justify-center rounded-full border-white bg-white px-3 text-[#783566] sm:flex"
+          >
+            <p className="text-xs">Save View</p>
+          </button>
+          <Popup
+            open={viewInputOpen}
+            anchor={viewInputAnchor}
+            placement="bottom-end"
+          >
+            <div className="mt-2 w-[400px] max-w-[calc(100vw-2rem)] border-[1px] bg-white px-4 py-2">
+              <input
+                type="text"
+                value={viewName}
+                placeholder="View name"
+                onChange={(e) => setViewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    void handleViewSave();
+                    setViewName("");
+                    setViewInputAnchor(null);
+                  }
+                }}
+                onBlur={() => {
+                  setViewName("");
+                  setViewInputAnchor(null);
+                }}
+                className="mt-2 h-[32px] w-full rounded-md border-[1px] border-gray-300 p-2 text-xs font-normal"
+                autoFocus
+              />
+            </div>
+          </Popup>
           <button className="mx-[2px] hidden h-[28px] items-center justify-center rounded-2xl px-3 hover:bg-[#783566] sm:flex">
             <CiUndo className="h-4 w-4 text-white" />
           </button>
@@ -862,11 +1304,44 @@ export default function Sheet() {
       <div className="h-[44px] w-full border-b-[1px] border-gray-300 bg-white">
         <div className="flex h-[44px] flex-row items-center justify-between bg-white">
           <div className="flex flex-row items-center bg-white pl-3">
-            <div className="mr-2 flex items-center">
-              <button className="flex h-[26px] items-center border-[2px] border-white px-[6px] text-xs text-black">
+            <div className="relative mr-2 flex items-center">
+              <button
+                className="flex h-[26px] items-center border-[2px] border-white px-[6px] text-xs text-black hover:bg-gray-100"
+                onClick={() => setViewsMenuOpen(!viewsMenuOpen)}
+              >
                 <RxHamburgerMenu className="h-4 w-4 text-gray-500" />
                 <span className="ml-1">Views</span>
               </button>
+              {viewsMenuOpen && (
+                <div className="absolute left-0 top-[30px] z-50 w-56 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5">
+                  <div className="py-1">
+                    <button
+                      className="block w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-100"
+                      onClick={() => {
+                        handleViewSelect(null);
+                        setViewsMenuOpen(false);
+                      }}
+                      onBlur={() => {
+                        setViewsMenuOpen(false);
+                      }}
+                    >
+                      Default View
+                    </button>
+                    {views?.map((view: View) => (
+                      <button
+                        key={view.id}
+                        className="block w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-100"
+                        onClick={() => {
+                          handleViewSelect(view.id);
+                          setViewsMenuOpen(false);
+                        }}
+                      >
+                        {view.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="ml-1 mr-3 flex h-[16px] items-center border-r-[1px] border-gray-600 border-opacity-30"></div>
             <div className="flex h-[26px] items-center px-2">
@@ -975,130 +1450,139 @@ export default function Sheet() {
       </div>
       <div className="flex flex-col justify-start border-b-[1px] border-gray-300 bg-white">
         <div className="flex w-full flex-row items-center justify-start border-b-[1px] border-gray-300 bg-white">
-          <table className="flex min-h-[calc(100vh-10rem)] min-w-full flex-col overflow-x-scroll">
-            <thead className="z-10 flex h-[30px] flex-row">
-              {table.getHeaderGroups().map((headerGroup, groupIndex) => (
-                <tr
-                  key={`headerGroup-${headerGroup.id}-${groupIndex}`}
-                  className="flex h-[30px] flex-row bg-gray-100"
-                >
-                  <th
-                    key={`checkbox-${headerGroup.id}`}
-                    className="flex h-[30px] min-w-[35px] items-center justify-center border-y-[1px] border-l-[1px] border-gray-300"
+          <div
+            className="flex min-h-[calc(100vh-10rem)] min-w-full flex-col overflow-x-scroll"
+            onScroll={handleScroll}
+            style={{ maxHeight: "calc(100vh - 200px)" }}
+          >
+            <table>
+              <thead className="z-10 flex h-[30px] flex-row">
+                {table.getHeaderGroups().map((headerGroup, groupIndex) => (
+                  <tr
+                    key={`headerGroup-${headerGroup.id}-${groupIndex}`}
+                    className="flex h-[30px] flex-row bg-gray-100"
                   >
-                    <MdOutlineCheckBoxOutlineBlank className="h-4 w-4" />
-                  </th>
-                  {headerGroup.headers.map((header, headerIndex) => (
                     <th
-                      key={`header-${headerGroup.id}-${header.id}-${headerIndex}`}
-                      className="flex h-full w-[178px] flex-row items-center justify-start border-y-[1px] border-r-[1px] border-gray-300 px-2 text-xs font-normal"
+                      key={`checkbox-${headerGroup.id}`}
+                      className="flex h-[30px] min-w-[35px] items-center justify-center border-y-[1px] border-l-[1px] border-gray-300"
                     >
-                      <div className="flex h-[30px] w-full flex-row items-center justify-start">
-                        <TbLetterA className="mr-2 h-4 w-4" />
+                      <MdOutlineCheckBoxOutlineBlank className="h-4 w-4" />
+                    </th>
+                    {headerGroup.headers.map((header, headerIndex) => (
+                      <th
+                        key={`header-${headerGroup.id}-${header.id}-${headerIndex}`}
+                        className="flex h-full w-[178px] flex-row items-center justify-start border-y-[1px] border-r-[1px] border-gray-300 px-2 text-xs font-normal"
+                      >
                         {flexRender(
                           header.column.columnDef.header,
                           header.getContext(),
                         )}
+                      </th>
+                    ))}
+                    <th
+                      key={`add-${headerGroup.id}`}
+                      className="flex h-[30px] w-[92px] items-center justify-center border-y-[1px] border-r-[1px] border-gray-300"
+                    >
+                      <div className="relative flex justify-end">
+                        <button
+                          onClick={(e) =>
+                            setHeaderInputAnchor(
+                              headerInputAnchor ? null : e.currentTarget,
+                            )
+                          }
+                        >
+                          <GoPlus className="h-4 w-4" />
+                        </button>
+                        <Popup
+                          open={headerInputOpen}
+                          anchor={headerInputAnchor}
+                          placement="bottom-end"
+                        >
+                          <div className="mt-2 w-[400px] max-w-[calc(100vw-2rem)] rounded-md border-[1px] bg-white px-4 py-2">
+                            <input
+                              type="text"
+                              value={headerInput}
+                              placeholder="Field name (optional)"
+                              onChange={(e) => setHeaderInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  handleHeaderAdd({
+                                    name: headerInput,
+                                  });
+                                  setHeaderInput("");
+                                  setHeaderInputAnchor(null);
+                                }
+                              }}
+                              onBlur={() => {
+                                setHeaderInput("");
+                                setHeaderInputAnchor(null);
+                              }}
+                              className="mt-2 h-[32px] w-full rounded-md border-[1px] border-gray-300 p-2 text-xs font-normal"
+                              autoFocus
+                            />
+                            <div className="mb-2 mt-3 flex h-[32px] w-full flex-row items-center justify-start rounded-md border-[1px] border-gray-300 px-3 text-xs font-normal">
+                              <CiSearch className="mr-2 h-5 w-5" />
+                              <input
+                                type="search"
+                                placeholder="Find a field type"
+                                className="h-full w-full"
+                              />
+                              <GrCircleQuestion className="ml-2 h-5 w-5" />
+                            </div>
+                            <div className="mb-2 mt-3 flex w-full flex-col items-center justify-start rounded-md border-[1px] border-gray-300 px-3 py-1 text-xs font-normal">
+                              <div className="mb-2 flex h-[34px] w-[328px] flex-row items-center justify-start rounded-md p-2">
+                                <TbLetterA className="mr-2 h-5 w-5" />
+                                <p className="text-xs">Single line text</p>
+                              </div>
+                              <div className="mb-2 flex h-[34px] w-[328px] flex-row items-center justify-start rounded-md p-2">
+                                <TbNumber1 className="mr-2 h-5 w-5" />
+                                <p className="text-xs">Number</p>
+                              </div>
+                            </div>
+                          </div>
+                        </Popup>
                       </div>
                     </th>
-                  ))}
-                  <th
-                    key={`add-${headerGroup.id}`}
-                    className="flex h-[30px] w-[92px] items-center justify-center border-y-[1px] border-r-[1px] border-gray-300"
+                  </tr>
+                ))}
+              </thead>
+              <tbody className="col-start-2 flex w-full flex-col items-start justify-start border-gray-300 bg-white">
+                {table.getRowModel().rows.map((row, rowIndex) => (
+                  <tr
+                    className="flex h-[30px] flex-row border-b-[1px] border-gray-300 bg-white"
+                    key={`row-${row.id}-${rowIndex}`}
                   >
-                    <div className="relative flex justify-end">
-                      <button
-                        onClick={(e) =>
-                          setAnchor(anchor ? null : e.currentTarget)
-                        }
-                      >
-                        <GoPlus className="h-4 w-4" />
-                      </button>
-                      <Popup open={open} anchor={anchor} placement="bottom-end">
-                        <div className="mt-2 w-[400px] max-w-[calc(100vw-2rem)] rounded-md border-[1px] bg-white px-4 py-2">
-                          <input
-                            type="text"
-                            value={headerInput}
-                            placeholder="Field name (optional)"
-                            onChange={(e) => setHeaderInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                handleHeaderAdd({
-                                  name: headerInput,
-                                });
-                                setHeaderInput("");
-                                setAnchor(null);
-                              }
-                            }}
-                            onBlur={() => {
-                              setHeaderInput("");
-                              setAnchor(null);
-                            }}
-                            className="mt-2 h-[32px] w-full rounded-md border-[1px] border-gray-300 p-2 text-xs font-normal"
-                            autoFocus
-                          />
-                          <div className="mb-2 mt-3 flex h-[32px] w-full flex-row items-center justify-start rounded-md border-[1px] border-gray-300 px-3 text-xs font-normal">
-                            <CiSearch className="mr-2 h-5 w-5" />
-                            <input
-                              type="search"
-                              placeholder="Find a field type"
-                              className="h-full w-full"
-                            />
-                            <GrCircleQuestion className="ml-2 h-5 w-5" />
-                          </div>
-                          <div className="mb-2 mt-3 flex w-full flex-col items-center justify-start rounded-md border-[1px] border-gray-300 px-3 py-1 text-xs font-normal">
-                            <div className="mb-2 flex h-[34px] w-[328px] flex-row items-center justify-start rounded-md p-2">
-                              <TbLetterA className="mr-2 h-5 w-5" />
-                              <p className="text-xs">Single line text</p>
-                            </div>
-                            <div className="mb-2 flex h-[34px] w-[328px] flex-row items-center justify-start rounded-md p-2">
-                              <TbNumber1 className="mr-2 h-5 w-5" />
-                              <p className="text-xs">Number</p>
-                            </div>
-                          </div>
-                        </div>
-                      </Popup>
-                    </div>
-                  </th>
-                </tr>
-              ))}
-            </thead>
-            <tbody className="col-start-2 flex w-full flex-col items-start justify-start border-gray-300 bg-white">
-              {table.getRowModel().rows.map((row, rowIndex) => (
-                <tr
-                  className="flex h-[30px] flex-row border-b-[1px] border-gray-300 bg-white"
-                  key={`row-${row.id}-${rowIndex}`}
-                >
-                  <td className="flex h-[30px] w-[35px] items-center justify-center border-b-[1px] border-gray-300 bg-white text-xs font-normal">
-                    <div key={`index-${row.id}-${rowIndex}`}>
-                      {rowIndex + 1}
-                    </div>
-                  </td>
-                  {row.getVisibleCells().map((cell, cellIndex) => (
-                    <td
-                      className="flex h-[30px] w-[178px] flex-row items-center justify-start border-b-[1px] border-r-[1px] border-gray-300 bg-white px-2 text-xs font-normal"
-                      key={`cell-${row.id}-${cell.column.id}-${cellIndex}`}
-                    >
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext(),
-                      )}
+                    <td className="flex h-[30px] w-[35px] items-center justify-center border-b-[1px] border-gray-300 bg-white text-xs font-normal">
+                      <div key={`index-${row.id}-${rowIndex}`}>
+                        {rowIndex + 1}
+                      </div>
                     </td>
-                  ))}
+                    {row.getVisibleCells().map((cell, cellIndex) => (
+                      <td
+                        className="flex h-[30px] w-[178px] flex-row items-center justify-start border-b-[1px] border-r-[1px] border-gray-300 bg-white px-2 text-xs font-normal"
+                        key={`cell-${row.id}-${cell.column.id}-${cellIndex}`}
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                <tr className="flex h-[30px] flex-row border-gray-300 bg-white">
+                  <td className="flex h-[30px] w-[35px] items-center justify-center border-gray-300 bg-white text-xs font-normal">
+                    <button
+                      className="flex h-[26px] items-center border-[2px] border-white px-[6px] text-xs text-black"
+                      onClick={handleRowCreate}
+                    >
+                      <GoPlus className="h-4 w-4" />
+                    </button>
+                  </td>
                 </tr>
-              ))}
-              <tr className="flex h-[30px] flex-row border-gray-300 bg-white">
-                <td className="flex h-[30px] w-[35px] items-center justify-center border-gray-300 bg-white text-xs font-normal">
-                  <button
-                    className="flex h-[26px] items-center border-[2px] border-white px-[6px] text-xs text-black"
-                    onClick={handleRowCreate}
-                  >
-                    <GoPlus className="h-4 w-4" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

@@ -94,6 +94,7 @@ model Table {
     createdAt   DateTime @default(now())
     createdBy   User     @relation(fields: [createdById], references: [id])
     createdById String
+    views       View[]
 }
 
 model Row {
@@ -115,4 +116,13 @@ model Header {
     headerPosition Int
 
     @@unique([tableId, headerPosition])
+}
+
+model View {
+    id        Int      @id @default(autoincrement())
+    name      String
+    tableId   Int
+    table     Table    @relation(fields: [tableId], references: [id])
+    createdAt DateTime @default(now())
+    rowOrder  Int[]
 }
