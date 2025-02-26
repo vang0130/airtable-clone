@@ -24,7 +24,6 @@ export const sheetRouter = createTRPCRouter({
       include: { 
         // createdBy: true, 
       }, 
-      // where: { archived: false },
     });
   }),
   findSheet: protectedProcedure
@@ -42,14 +41,4 @@ export const sheetRouter = createTRPCRouter({
         },
       });
     }),
-
-  // addHeader: protectedProcedure
-  //   .input(z.object({ id: z.number(), header: z.array(z.string()) }))
-  //   .mutation(async ({ ctx, input }) => {
-  //     return ctx.db.sheet.update({
-  //       where: { id: input?.id },
-  //       data: { header: input?.header },
-  //     });
-  //   }),
-
 });

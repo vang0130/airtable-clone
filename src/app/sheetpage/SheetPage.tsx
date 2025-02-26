@@ -16,7 +16,6 @@ import {
   CiTextAlignJustify,
   CiUndo,
 } from "react-icons/ci";
-import { GrCircleQuestion } from "react-icons/gr";
 import { FaRegEyeSlash } from "react-icons/fa";
 import { PiTextAlignCenterLight, PiPaintBucket } from "react-icons/pi";
 import { HiArrowsUpDown } from "react-icons/hi2";
@@ -35,6 +34,7 @@ import {
 } from "@tanstack/react-table";
 import { Unstable_Popup as Popup } from "@mui/base/Unstable_Popup";
 import type { JsonValue } from "next-auth/adapters";
+import { HeaderType } from "@prisma/client";
 
 // some type declarations
 interface Table {
@@ -42,14 +42,13 @@ interface Table {
     id?: number; // check
     name: string;
     headerPosition: number;
-    isPending?: boolean;
+    type: HeaderType;
   }>;
   id: number;
   rows: {
     id?: number; // check
     values: Record<string, string>;
     rowPosition: number;
-    isPending?: boolean;
     tableId: number;
   }[];
 }
@@ -93,7 +92,7 @@ interface PendingChanges {
       headers: {
         name: string;
         headerPosition: number;
-        isPending?: boolean;
+        type: HeaderType;
       }[];
     }
   >;
@@ -108,7 +107,6 @@ interface PendingChanges {
       tableId: number;
       values: Record<string, string>;
       rowPosition: number;
-      isPending?: boolean;
     }[];
   };
 }
@@ -154,6 +152,7 @@ export default function Sheet() {
   const [headerInputAnchor, setHeaderInputAnchor] =
     useState<null | HTMLElement>(null);
   const headerInputOpen = Boolean(headerInputAnchor);
+  const [headerType, setHeaderType] = useState<HeaderType>(HeaderType.TEXT);
 
   const [viewInputAnchor, setViewInputAnchor] = useState<null | HTMLElement>(
     null,
@@ -416,7 +415,7 @@ export default function Sheet() {
         const newHeaders = headers.map((h, index) => ({
           name: h.name,
           headerPosition: maxPosition + index + 1,
-          isPending: true,
+          type: h.type,
         }));
 
         return {
@@ -471,11 +470,13 @@ export default function Sheet() {
         const entries = Object.entries(pendingChanges.headers);
         const headerData = entries[0]?.[1];
         if (headerData) {
+          console.log("header data: ", headerData);
           await addHeader.mutateAsync({
             tableId: headerData.tableId,
             headers: headerData.headers.map((h) => ({
               name: h.name,
               headerPosition: h.headerPosition,
+              type: h.type,
             })),
           });
         }
@@ -537,7 +538,7 @@ export default function Sheet() {
   }, [handleKeyDown]);
 
   // add a new header
-  const handleHeaderAdd = (newHeader: { name: string }) => {
+  const handleHeaderAdd = (newHeader: { name: string; type: HeaderType }) => {
     if (!tableData?.id) return;
 
     const currentHeaders = [
@@ -572,8 +573,8 @@ export default function Sheet() {
               ...(prev.headers[tableData.id]?.headers ?? []),
               {
                 name: newHeader.name,
+                type: newHeader.type,
                 headerPosition: nextPosition,
-                isPending: true,
               },
             ].sort((a, b) => a.headerPosition - b.headerPosition),
           },
@@ -672,7 +673,6 @@ export default function Sheet() {
       ),
       rowPosition: nextPosition,
       tableId: tableData.id,
-      isPending: true,
     };
 
     // update pending changes
@@ -706,6 +706,20 @@ export default function Sheet() {
       const targetRow = tableData.rows.find(
         (r) => r.rowPosition === rowPosition && r.tableId === tableId,
       );
+
+      const header = tableData?.headers.find(
+        (h) => h.headerPosition.toString() === headerPosition.toString(),
+      );
+
+      if (header?.type === HeaderType.NUMBER) {
+        if (isNaN(Number(value)) || value === "") {
+          return;
+        }
+      } else if (header?.type === HeaderType.TEXT) {
+        if (/^\d+$/.test(value)) {
+          return;
+        }
+      }
 
       if (targetRow?.id) {
         setPendingChanges((prev) => ({
@@ -914,7 +928,11 @@ export default function Sheet() {
           header: () => (
             <div className="flex h-[30px] w-full flex-row items-center justify-between">
               <div className="flex items-center">
-                <TbLetterA className="mr-2 h-4 w-4" />
+                {header.type === HeaderType.TEXT ? (
+                  <TbLetterA className="mr-2 h-4 w-4" />
+                ) : (
+                  <TbNumber1 className="mr-2 h-4 w-4" />
+                )}
                 {header.name}
               </div>
               <button
@@ -1106,7 +1124,6 @@ export default function Sheet() {
       ),
       rowPosition: startPosition + index,
       tableId: tableData.id,
-      isPending: true,
     }));
 
     // update pending changes
@@ -1508,33 +1525,35 @@ export default function Sheet() {
                                 if (e.key === "Enter") {
                                   handleHeaderAdd({
                                     name: headerInput,
+                                    type: headerType,
                                   });
                                   setHeaderInput("");
                                   setHeaderInputAnchor(null);
                                 }
                               }}
-                              onBlur={() => {
-                                setHeaderInput("");
-                                setHeaderInputAnchor(null);
-                              }}
                               className="mt-2 h-[32px] w-full rounded-md border-[1px] border-gray-300 p-2 text-xs font-normal"
                               autoFocus
                             />
-                            <div className="mb-2 mt-3 flex h-[32px] w-full flex-row items-center justify-start rounded-md border-[1px] border-gray-300 px-3 text-xs font-normal">
-                              <CiSearch className="mr-2 h-5 w-5" />
-                              <input
-                                type="search"
-                                placeholder="Find a field type"
-                                className="h-full w-full"
-                              />
-                              <GrCircleQuestion className="ml-2 h-5 w-5" />
-                            </div>
-                            <div className="mb-2 mt-3 flex w-full flex-col items-center justify-start rounded-md border-[1px] border-gray-300 px-3 py-1 text-xs font-normal">
-                              <div className="mb-2 flex h-[34px] w-[328px] flex-row items-center justify-start rounded-md p-2">
+                            <div className="mb-1 mt-3 flex w-full flex-col items-center justify-start rounded-md border-[1px] border-gray-300 px-3 py-1 text-xs font-normal">
+                              <div
+                                className={`mb-2 flex h-[34px] w-[328px] cursor-pointer flex-row items-center justify-start rounded-md p-2 hover:bg-gray-100 ${
+                                  headerType === HeaderType.TEXT
+                                    ? "bg-gray-100 font-medium"
+                                    : ""
+                                }`}
+                                onClick={() => setHeaderType(HeaderType.TEXT)}
+                              >
                                 <TbLetterA className="mr-2 h-5 w-5" />
-                                <p className="text-xs">Single line text</p>
+                                <p className="text-xs">Text</p>
                               </div>
-                              <div className="mb-2 flex h-[34px] w-[328px] flex-row items-center justify-start rounded-md p-2">
+                              <div
+                                className={`flex h-[34px] w-[328px] cursor-pointer flex-row items-center justify-start rounded-md p-2 hover:bg-gray-100 ${
+                                  headerType === HeaderType.NUMBER
+                                    ? "bg-gray-100 font-medium"
+                                    : ""
+                                }`}
+                                onClick={() => setHeaderType(HeaderType.NUMBER)}
+                              >
                                 <TbNumber1 className="mr-2 h-5 w-5" />
                                 <p className="text-xs">Number</p>
                               </div>

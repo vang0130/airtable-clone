@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call */
+import { HeaderType } from "@prisma/client";
 import { z } from "zod";
 
 import {
@@ -16,6 +17,7 @@ export const headerRouter = createTRPCRouter({
           z.object({
             name: z.string(),
             headerPosition: z.number(),
+            type: z.nativeEnum(HeaderType),
           })
         ),
       })
@@ -27,9 +29,10 @@ export const headerRouter = createTRPCRouter({
             name: h.name,
             tableId: input.tableId,
             headerPosition: h.headerPosition,
+            type: h.type,
           })),
         });
-        
+
         return tx.header.findMany({
           where: {
             tableId: input.tableId,
