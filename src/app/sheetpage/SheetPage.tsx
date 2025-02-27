@@ -623,6 +623,52 @@ export default function Sheet() {
     utils.sheet.findSheet,
   ]);
 
+  // save a view
+  const handleViewSave = async () => {
+    if (!tableData?.id) return;
+
+    try {
+      setSavingView(true);
+
+      // save any pending changes
+      if (
+        Object.keys(pendingChanges.headers).length > 0 ||
+        pendingChanges.rows.updates.length > 0 ||
+        pendingChanges.rows.newRows.length > 0
+      ) {
+        await saveAllChanges();
+      }
+
+      // get current row order after changes are saved
+      const currentOrder = table
+        .getRowModel()
+        .rows.map((row) => row.original.rowPosition);
+
+      const newView = await createView.mutateAsync({
+        name: viewName,
+        tableId: tableData.id,
+        rowOrder: currentOrder,
+        // sortConfig,
+      });
+
+      // refetch views after successful creation
+      await refetchViews();
+
+      setViewName("");
+      setViewInputAnchor(null);
+
+      // navigate to the new view
+      const params = new URLSearchParams(searchParams);
+      params.set("view", newView.id.toString());
+      router.push(`${pathname}?${params.toString()}`);
+    } catch (error) {
+      console.error("Error saving view:", error);
+      setSavingView(false);
+    } finally {
+      setSavingView(false);
+    }
+  };
+
   // auto saving funtionality
   // auto save, if there have been no changes for 3 seconds
   const triggerAutoSave = useCallback(() => {
