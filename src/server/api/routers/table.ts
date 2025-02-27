@@ -34,45 +34,50 @@ export const tableRouter = createTRPCRouter({
       });
     }),
 
-  findTable: publicProcedure
-    .input(z.object({ id: z.number() }))
+    getMoreRows: publicProcedure
+    .input(z.object({
+      tableId: z.number(),
+      page: z.number().optional().default(0),
+      pageSize: z.number().optional().default(500),
+      cursor: z.number().optional(),
+    }))
     .query(async ({ ctx, input }) => {
-      const table = await ctx.db.table.findUnique({
-        where: { id: input.id },
-        include: { rows: true, headers: true }
-      });
-
+      // Build query options
+      const baseOptions = {
+        where: { tableId: input.tableId },
+        orderBy: { rowPosition: 'asc' as const }, // Use const assertion
+        take: input.pageSize + 1
+      };
+  
+      // Add cursor or skip depending on pagination type
+      const queryOptions = input.cursor
+        ? { 
+            ...baseOptions,
+            cursor: { id: input.cursor },
+            skip: 1 // Skip the cursor row itself
+          }
+        : {
+            ...baseOptions,
+            skip: input.page * input.pageSize
+          };
+  
+      // Execute the query with properly typed options
+      const rows = await ctx.db.row.findMany(queryOptions);
+      
+      // If we got more rows than pageSize, there are more rows to fetch
+      const hasMoreRows = rows.length > input.pageSize;
+      
+      // Remove the extra row from the results
+      const data = hasMoreRows ? rows.slice(0, input.pageSize) : rows;
+      
+      // Return the rows, along with the next cursor and hasMoreRows flag
       return {
-        ...table,
-        headers: table?.headers ?? [],
-        rows: table?.rows.map((row) => ({
+        rows: data.map((row) => ({
           ...row,
           values: row.values as Record<string, string>,
         })),
+        nextCursor: data.length > 0 ? data[data.length - 1]?.id : null,
+        hasMoreRows: hasMoreRows,
       };
     }),
-    // addHeader: protectedProcedure
-    // .input(
-    //   z.object({
-    //     id: z.number(), // Table ID
-    //     headers: z.array(
-    //       z.object({
-    //         name: z.string(), // Remove temp ID because the DB will generate a real one
-    //       })
-    //     ),
-    //   })
-    // )
-    // .mutation(async ({ ctx, input }) => {
-    //   await ctx.db.header.createMany({
-    //     data: input.headers.map((h) => ({
-    //       name: h.name, 
-    //       tableId: input.id,
-    //     }))
-    //   })
-    //   return ctx.db.header.findMany({
-    //     where: {tableId: input.id },
-    //     select: { id: true, name: true }, 
-    //     orderBy: { id: "asc" },
-    //   })
-    // }),
 });

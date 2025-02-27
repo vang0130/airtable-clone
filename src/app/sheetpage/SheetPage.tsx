@@ -45,6 +45,7 @@ interface Table {
     type: HeaderType;
   }>;
   id: number;
+  hasMoreRows: boolean;
   rows: {
     id?: number; // check
     values: Record<string, string>;
@@ -167,14 +168,24 @@ export default function Sheet() {
 
   // saving indicator
   const [isSaving, setIsSaving] = useState(false);
+  // stores a timer for auto saving
+  // can clear timer and reset with clearTimeout
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [userActive, setUserActive] = useState(false);
+
+  // the crurent page we are on
+  const [currentPage, setCurrentPage] = useState(0);
+  // last cursor position from previous loads
+  const [lastCursor, setLastCursor] = useState<number | undefined>(undefined);
 
   // infinite scrolling
-  const [rowsToShow, setRowsToShow] = useState(50);
-  const ROWS_PER_LOAD = 50;
+  const ROWS_PER_PAGE = 500;
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const [viewsMenuOpen, setViewsMenuOpen] = useState(false);
   const [viewName, setViewName] = useState("");
   const [savingView, setSavingView] = useState(false);
+  const [selectedViewId, setSelectedViewId] = useState<number | null>(null);
   type SortDirection = "desc" | "asc" | null;
   interface SortConfig {
     columnId: string;
@@ -184,6 +195,86 @@ export default function Sheet() {
 
   // current sort config
   const [sortConfigs, setSortConfigs] = useState<SortConfig[]>([]);
+
+  // Table scroll handler
+  const handleTableScroll = useCallback(
+    async (e: React.UIEvent<HTMLDivElement>) => {
+      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+      // Start loading when user is halfway through current batch
+      const halfwayPoint = scrollHeight / 2;
+      const shouldFetchMore = scrollTop >= halfwayPoint;
+
+      if (shouldFetchMore && !isLoadingMore && tableData?.hasMoreRows) {
+        setIsLoadingMore(true);
+        try {
+          const lastRowId = tableData.rows[tableData.rows.length - 1]?.id;
+
+          const result = await utils.table.getMoreRows.fetch({
+            tableId: selectedTableId ?? 0,
+            pageSize: ROWS_PER_PAGE,
+            cursor: lastRowId,
+          });
+
+          if (result) {
+            setTableData((prev) => {
+              if (!prev) return prev;
+
+              // no duplicates
+              const newRowIds = new Set(result.rows.map((row) => row.id));
+              const filteredExistingRows = prev.rows.filter(
+                (row) => !newRowIds.has(row.id ?? 0),
+              );
+
+              return {
+                ...prev,
+                rows: [...filteredExistingRows, ...result.rows],
+                hasMoreRows: result.hasMoreRows,
+              };
+            });
+          }
+        } finally {
+          setIsLoadingMore(false);
+        }
+      }
+    },
+    [isLoadingMore, tableData, selectedTableId],
+  );
+
+  const handleViewScroll = useCallback(
+    async (e: React.UIEvent<HTMLDivElement>) => {
+      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+      // start loading when user is halfway through current batch
+      const halfwayPoint = scrollHeight / 2;
+      const shouldFetchMore = scrollTop >= halfwayPoint;
+
+      if (shouldFetchMore && !isLoadingMore && tableData?.hasMoreRows) {
+        setIsLoadingMore(true);
+        try {
+          const result = await utils.view.getViewRows.fetch({
+            tableId: selectedTableId ?? 0,
+            viewId: selectedViewId!,
+            limit: ROWS_PER_PAGE,
+            cursor: tableData.rows.length,
+          });
+
+          if (result) {
+            setTableData((prev) => {
+              if (!prev) return prev;
+
+              return {
+                ...prev,
+                rows: [...prev.rows, ...result.rows],
+                hasMoreRows: result.hasMoreRows,
+              };
+            });
+          }
+        } finally {
+          setIsLoadingMore(false);
+        }
+      }
+    },
+    [isLoadingMore, tableData, selectedViewId, selectedTableId],
+  );
 
   // create a new table
   const createTable = api.table.create.useMutation({
@@ -201,14 +292,13 @@ export default function Sheet() {
         if (!old) return old;
         return {
           ...old,
-          tables: [
-            ...(old.tables ?? []),
-            {
-              ...newTable,
-              headers: [],
-              rows: [],
-            },
-          ],
+          tables: old.tables.map((table) => ({
+            ...table,
+            totalRows: 0,
+            hasMoreRows: false,
+            rows: [],
+            headers: [],
+          })),
         };
       });
 
@@ -266,9 +356,17 @@ export default function Sheet() {
         id={cellId}
         className="h-[30px] w-full cursor-text border-none bg-transparent outline-none focus:ring-2 focus:ring-blue-500"
         value={editingValue}
-        onChange={(e) => setEditingValue(e.target.value)}
-        onBlur={handleSave}
+        onChange={(e) => {
+          setEditingValue(e.target.value);
+          setUserActive(true);
+        }}
+        onFocus={() => setUserActive(true)}
+        onBlur={() => {
+          setUserActive(false);
+          handleSave();
+        }}
         onKeyDown={(e) => {
+          setUserActive(true);
           if (e.key === "Tab") {
             e.preventDefault();
             if (editingValue !== info.getValue()) {
@@ -333,10 +431,10 @@ export default function Sheet() {
             ...row,
             values: pendingUpdate
               ? {
-                  ...(row.values as Record<string, string>),
+                  ...row.values,
                   ...pendingUpdate.values,
                 }
-              : (row.values as Record<string, string>),
+              : row.values,
           };
         }),
         ...pendingChanges.rows.newRows,
@@ -353,6 +451,11 @@ export default function Sheet() {
       headers: {},
       rows: { updates: [], newRows: [] },
     });
+
+    // reset pagination
+    setCurrentPage(0);
+    setLastCursor(undefined);
+    setSelectedViewId(null);
 
     const params = new URLSearchParams(searchParams);
     params.set("table", tableId.toString());
@@ -376,11 +479,7 @@ export default function Sheet() {
                   ...table,
                   rows: table.rows.map((row) => ({
                     ...row,
-                    values: row.values as JsonValue,
-                    id: row.id,
-                    createdAt: row.createdAt,
-                    tableId: row.tableId,
-                    rowPosition: row.rowPosition,
+                    values: row.values,
                   })),
                 }
               : table,
@@ -458,19 +557,20 @@ export default function Sheet() {
   const BATCH_SIZE = 5000;
 
   const saveAllChanges = useCallback(async () => {
-    if (!tableData?.id) return;
+    if (!tableData?.id || isSaving) return;
 
-    console.log(pendingChanges);
     try {
       setIsSaving(true);
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
       await utils.sheet.findSheet.cancel();
 
-      // handle headers first (assuming this is relatively small)
       if (Object.keys(pendingChanges.headers).length > 0) {
         const entries = Object.entries(pendingChanges.headers);
         const headerData = entries[0]?.[1];
         if (headerData) {
-          console.log("header data: ", headerData);
           await addHeader.mutateAsync({
             tableId: headerData.tableId,
             headers: headerData.headers.map((h) => ({
@@ -511,7 +611,9 @@ export default function Sheet() {
       console.error("Error saving changes:", error);
       setIsSaving(false);
     } finally {
-      setIsSaving(false);
+      setTimeout(() => {
+        setIsSaving(false);
+      }, 500);
     }
   }, [
     tableData?.id,
@@ -521,21 +623,45 @@ export default function Sheet() {
     utils.sheet.findSheet,
   ]);
 
-  // save all changes on ctrl+s
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        void saveAllChanges();
-      }
-    },
-    [saveAllChanges],
-  );
+  // auto saving funtionality
+  // auto save, if there have been no changes for 3 seconds
+  const triggerAutoSave = useCallback(() => {
+    // clear any existing timer
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
 
+    // set a new timer to wait for 3 seconds
+    autoSaveTimerRef.current = setTimeout(() => {
+      void saveAllChanges();
+    }, 5000);
+  }, [saveAllChanges]);
+
+  // cleanup timer when we nav away
   useEffect(() => {
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // watch for changes and user inactivity
+  useEffect(() => {
+    const hasHeaderChanges = Object.keys(pendingChanges.headers).length > 0;
+    const hasRowUpdates = pendingChanges.rows.updates.length > 0;
+    const hasNewRows = pendingChanges.rows.newRows.length > 0;
+
+    if (
+      (hasHeaderChanges || hasRowUpdates || hasNewRows) &&
+      !isSaving &&
+      !userActive
+    ) {
+      triggerAutoSave();
+    }
+  }, [pendingChanges, triggerAutoSave, isSaving, userActive]);
 
   // add a new header
   const handleHeaderAdd = (newHeader: { name: string; type: HeaderType }) => {
@@ -779,62 +905,53 @@ export default function Sheet() {
     { enabled: !!tableData?.id },
   );
 
-  // save a view
-  const handleViewSave = async () => {
-    if (!tableData?.id) return;
+  const viewRowsQuery = api.view.getViewRows.useQuery(
+    {
+      tableId: selectedTableId ?? 0,
+      viewId: selectedViewId ?? 0,
+      limit: ROWS_PER_PAGE,
+      cursor: 0,
+    },
+    { enabled: false },
+  );
 
+  const handleViewSelect = async (viewId: number | null) => {
+    setSelectedViewId(viewId);
+    setIsLoadingMore(true);
     try {
-      setSavingView(true);
+      if (viewId) {
+        setCurrentPage(0);
 
-      // save any pending changes
-      if (
-        Object.keys(pendingChanges.headers).length > 0 ||
-        pendingChanges.rows.updates.length > 0 ||
-        pendingChanges.rows.newRows.length > 0
-      ) {
-        await saveAllChanges();
+        const params = new URLSearchParams(searchParams);
+        params.set("view", viewId.toString());
+        router.push(`${pathname}?${params.toString()}`);
+
+        if (!tableData?.rows || tableData.rows.length < ROWS_PER_PAGE) {
+          const result = await viewRowsQuery.refetch();
+          if (result.data) {
+            setTableData((prev) => ({
+              ...prev!,
+              rows: result.data.rows.map((row) => ({
+                ...row,
+                values: row.values,
+              })),
+              hasMoreRows: result.data.hasMoreRows,
+            }));
+          }
+        }
+      } else {
+        setCurrentPage(0);
+
+        // Clear view from URL
+        const params = new URLSearchParams(searchParams);
+        params.delete("view");
+        router.push(`${pathname}?${params.toString()}`);
+
+        // await utils.sheet.findSheet.refetch();
       }
-
-      // get current row order after changes are saved
-      const currentOrder = table
-        .getRowModel()
-        .rows.map((row) => row.original.rowPosition);
-
-      const newView = await createView.mutateAsync({
-        name: viewName,
-        tableId: tableData.id,
-        rowOrder: currentOrder,
-        // sortConfig,
-      });
-
-      // refetch views after successful creation
-      await refetchViews();
-
-      setViewName("");
-      setViewInputAnchor(null);
-
-      // navigate to the new view
-      const params = new URLSearchParams(searchParams);
-      params.set("view", newView.id.toString());
-      router.push(`${pathname}?${params.toString()}`);
-    } catch (error) {
-      console.error("Error saving view:", error);
-      setSavingView(false);
     } finally {
-      setSavingView(false);
+      setIsLoadingMore(false);
     }
-  };
-
-  const handleViewSelect = (viewId: number | null) => {
-    setSortConfigs([]); // clear all sorts
-    const params = new URLSearchParams(searchParams);
-    if (viewId) {
-      params.set("view", viewId.toString());
-    } else {
-      params.delete("view");
-    }
-    router.push(`${pathname}?${params.toString()}`);
-    setViewsMenuOpen(false);
   };
 
   const sortRows = (rows: any[], configs: SortConfig[]) => {
@@ -1053,12 +1170,12 @@ export default function Sheet() {
         allRows.sort((a, b) => a.rowPosition - b.rowPosition);
       }
 
-      return allRows.slice(0, rowsToShow);
+      return allRows;
     }, [
       tableData?.rows,
       pendingChanges.rows.updates,
       pendingChanges.rows.newRows,
-      rowsToShow,
+      ROWS_PER_PAGE,
       searchParams,
       views,
       sortConfigs,
@@ -1067,30 +1184,6 @@ export default function Sheet() {
     getCoreRowModel: getCoreRowModel(),
     enableRowSelection: true,
   });
-
-  const handleScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-      const bottomReached = scrollHeight - scrollTop <= clientHeight * 1.5;
-
-      console.log({
-        scrollTop,
-        scrollHeight,
-        clientHeight,
-        bottomReached,
-        currentRowsShown: rowsToShow,
-        totalRows:
-          (tableData?.rows?.length ?? 0) + pendingChanges.rows.newRows.length,
-      });
-
-      if (bottomReached) {
-        const totalRows =
-          (tableData?.rows?.length ?? 0) + pendingChanges.rows.newRows.length;
-        setRowsToShow((prev) => Math.min(prev + ROWS_PER_LOAD, totalRows));
-      }
-    },
-    [tableData?.rows?.length, pendingChanges.rows.newRows.length],
-  );
 
   const handleBulkRowCreate = useCallback(() => {
     if (!tableData?.id) return;
@@ -1193,12 +1286,17 @@ export default function Sheet() {
         <div className="ml-auto flex flex-row items-center justify-between gap-2">
           {isSaving && (
             <div className="flex h-[28px] flex-col items-center justify-center rounded-2xl px-3">
-              <span className="text-xs text-white">Saving data...</span>
+              <span className="text-xs text-white">Saving...</span>
             </div>
           )}
           {savingView && (
             <div className="flex h-[28px] flex-col items-center justify-center rounded-2xl px-3">
               <span className="text-xs text-white">Saving view...</span>
+            </div>
+          )}
+          {isLoadingMore && (
+            <div className="flex h-[28px] flex-col items-center justify-center rounded-2xl px-3">
+              <span className="text-xs text-white">Loading rows...</span>
             </div>
           )}
           <button
@@ -1335,7 +1433,7 @@ export default function Sheet() {
                     <button
                       className="block w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-100"
                       onClick={() => {
-                        handleViewSelect(null);
+                        void handleViewSelect(null);
                         setViewsMenuOpen(false);
                       }}
                       onBlur={() => {
@@ -1349,7 +1447,7 @@ export default function Sheet() {
                         key={view.id}
                         className="block w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-100"
                         onClick={() => {
-                          handleViewSelect(view.id);
+                          void handleViewSelect(view.id);
                           setViewsMenuOpen(false);
                         }}
                       >
@@ -1468,8 +1566,8 @@ export default function Sheet() {
       <div className="flex flex-col justify-start border-b-[1px] border-gray-300 bg-white">
         <div className="flex w-full flex-row items-center justify-start border-b-[1px] border-gray-300 bg-white">
           <div
-            className="flex min-h-[calc(100vh-10rem)] min-w-full flex-col overflow-x-scroll"
-            onScroll={handleScroll}
+            className="flex min-h-[calc(100vh-10rem)] min-w-full flex-col overflow-auto"
+            onScroll={selectedViewId ? handleViewScroll : handleTableScroll}
             style={{ maxHeight: "calc(100vh - 200px)" }}
           >
             <table>

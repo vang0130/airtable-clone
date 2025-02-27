@@ -29,16 +29,51 @@ export const sheetRouter = createTRPCRouter({
   findSheet: protectedProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
-      return ctx.db.sheet.findUnique({
+      const sheet = await ctx.db.sheet.findUnique({
         where: { id: input.id },
         include: {
           tables: {
             include: {
               headers: true,
-              rows: true,
+              // don't fetch all rows
+              rows: false,
             },
           },
         },
       });
+  
+      if (!sheet) return null;
+  
+      // for each table, fetch the first page of rows (only first 500 rows)
+      const tablesWithRows = await Promise.all(
+        sheet.tables.map(async (table) => {
+          // fetch first page of rows for this table
+          const rows = await ctx.db.row.findMany({
+            where: { tableId: table.id },
+            orderBy: { rowPosition: 'asc' },
+            take: 500,
+          });
+  
+          // get total row count for this table
+          const totalRows = await ctx.db.row.count({
+            where: { tableId: table.id }
+          });
+  
+          return {
+            ...table,
+            rows: rows.map(row => ({
+              ...row,
+              values: row.values as Record<string, string>,
+            })),
+            totalRows,
+            hasMoreRows: totalRows > 500
+          };
+        })
+      );
+  
+      return {
+        ...sheet,
+        tables: tablesWithRows,
+      };
     }),
 });
