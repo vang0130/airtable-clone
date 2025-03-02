@@ -6,6 +6,7 @@ import {
   protectedProcedure,
   publicProcedure,
 } from "~/server/api/trpc";
+import { FilterType } from "@prisma/client";
 
 export const viewRouter = createTRPCRouter({
   create: protectedProcedure
@@ -14,6 +15,11 @@ export const viewRouter = createTRPCRouter({
         name: z.string(),
         tableId: z.number(),
         rowOrder: z.array(z.number()),
+        filters: z.array(z.object({
+          columnId: z.string(),
+          type: z.nativeEnum(FilterType),
+          value: z.string().optional(),
+        })),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -22,6 +28,13 @@ export const viewRouter = createTRPCRouter({
           name: input.name,
           tableId: input.tableId,
           rowOrder: input.rowOrder,
+          filters: {
+            create: input.filters.map((filter) => ({
+              columnId: filter.columnId,
+              type: filter.type,
+              value: filter.value,
+            })),
+          },
         },
       });
     }),
@@ -35,6 +48,9 @@ export const viewRouter = createTRPCRouter({
       return ctx.db.view.findMany({
         where: {
           tableId: input.tableId,
+        },
+        include: {
+          filters: true,
         },
         orderBy: {
           createdAt: 'desc',
@@ -50,9 +66,12 @@ export const viewRouter = createTRPCRouter({
       cursor: z.number().optional()
     }))
     .query(async ({ ctx, input }) => {
-      // fetch view
+      // fetch view with filters
       const view = await ctx.db.view.findUnique({
-        where: { id: input.viewId }
+        where: { id: input.viewId },
+        include: {
+          filters: true,
+        }
       });
 
       if (!view) throw new Error("View not found");

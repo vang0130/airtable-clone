@@ -31,15 +31,19 @@ import {
   flexRender,
   getCoreRowModel,
   useReactTable,
+  getFilteredRowModel,
+  ColumnFiltersState,
+  Row,
 } from "@tanstack/react-table";
 import { Unstable_Popup as Popup } from "@mui/base/Unstable_Popup";
 import type { JsonValue } from "next-auth/adapters";
-import { HeaderType } from "@prisma/client";
+import { Header, HeaderType } from "@prisma/client";
+import { FilterType } from "@prisma/client";
 
 // some type declarations
 interface Table {
   headers: Array<{
-    id?: number; // check
+    id?: number;
     name: string;
     headerPosition: number;
     type: HeaderType;
@@ -47,7 +51,7 @@ interface Table {
   id: number;
   hasMoreRows: boolean;
   rows: {
-    id?: number; // check
+    id?: number;
     values: Record<string, string>;
     rowPosition: number;
     tableId: number;
@@ -83,7 +87,6 @@ interface CellProps {
   ) => void;
 }
 
-// changes to save on the next ctrl+s
 // position is unique for each table id
 interface PendingChanges {
   headers: Record<
@@ -112,11 +115,20 @@ interface PendingChanges {
   };
 }
 
+// filter type for filtering rows
+interface Filter {
+  columnId: string;
+  type: FilterType; // 5 types
+  value?: string | null; // may or may not be present, depends on filter type
+}
+
+// view object, can have both sorts and filters
 interface View {
   id: number;
   name: string;
   rowOrder: number[];
   tableId: number;
+  filters: Filter[];
 }
 
 export default function Sheet() {
@@ -168,39 +180,97 @@ export default function Sheet() {
 
   // saving indicator
   const [isSaving, setIsSaving] = useState(false);
+
   // stores a timer for auto saving
   // can clear timer and reset with clearTimeout
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [userActive, setUserActive] = useState(false);
 
-  // the crurent page we are on
-  const [currentPage, setCurrentPage] = useState(0);
-  // last cursor position from previous loads
-  const [lastCursor, setLastCursor] = useState<number | undefined>(undefined);
+  // batch saving
+  const BATCH_SIZE = 5000;
 
   // infinite scrolling
   const ROWS_PER_PAGE = 500;
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
+  // view menu
   const [viewsMenuOpen, setViewsMenuOpen] = useState(false);
   const [viewName, setViewName] = useState("");
   const [savingView, setSavingView] = useState(false);
   const [selectedViewId, setSelectedViewId] = useState<number | null>(null);
+
+  // sort config
   type SortDirection = "desc" | "asc" | null;
   interface SortConfig {
-    columnId: string;
-    direction: SortDirection;
-    priority: number;
+    columnId: string; // sort only applies to one col
+    direction: SortDirection; // desc, asc, or null
+    priority: number; // priority of sort, works with two cols
   }
 
-  // current sort config
   const [sortConfigs, setSortConfigs] = useState<SortConfig[]>([]);
 
-  // Table scroll handler
+  // filters
+  const [filters, setFilters] = useState<Filter[]>([]);
+
+  // column filter
+  const [globalFilter, setGlobalFilter] = useState<string>("");
+  const [addFilterAnchor, setAddFilterAnchor] =
+    useState<HTMLButtonElement | null>(null);
+  const [addFilterOpen, setAddFilterOpen] = useState(false);
+  const [addFilterColumnId, setAddFilterColumnId] = useState<string | null>(
+    null,
+  );
+  const [selectedHeader, setSelectedHeader] = useState<Header | null>(null);
+  const [greaterThan, setGreaterThan] = useState<string>("");
+  const [lessThan, setLessThan] = useState<string>("");
+  const [contains, setContains] = useState<string>("");
+
+  // filtering for search input
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [searchInput, setSearchInput] = useState<string>("");
+  const [searchInputOpen, setSearchInputOpen] = useState<boolean>(false);
+  const [searchInputAnchor, setSearchInputAnchor] =
+    useState<HTMLButtonElement | null>(null);
+  // search input
+  const handleSearchInput = (searchTerm: string) => {
+    setGlobalFilter(searchTerm);
+  };
+
+  const applyFilters = useCallback(
+    (rows: any[]) => {
+      if (!filters.length) return rows;
+
+      return rows.filter((row) => {
+        return filters.every((filter) => {
+          const value = row.values[filter.columnId];
+
+          switch (filter.type) {
+            case "isEmpty":
+              return !value || value.trim() === "";
+            case "isNotEmpty":
+              return value && value.trim() !== "";
+            case "contains":
+              return value
+                ?.toLowerCase()
+                .includes(filter.value?.toString().toLowerCase() ?? "");
+            case "greaterThan":
+              return Number(value) > Number(filter.value);
+            case "lessThan":
+              return Number(value) < Number(filter.value);
+            default:
+              return true;
+          }
+        });
+      });
+    },
+    [filters],
+  );
+
+  // infinite scrolling for tables
   const handleTableScroll = useCallback(
     async (e: React.UIEvent<HTMLDivElement>) => {
       const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-      // Start loading when user is halfway through current batch
+      // start loading when user is halfway through current batch
       const halfwayPoint = scrollHeight / 2;
       const shouldFetchMore = scrollTop >= halfwayPoint;
 
@@ -240,6 +310,7 @@ export default function Sheet() {
     [isLoadingMore, tableData, selectedTableId],
   );
 
+  // infinite scrolling for views
   const handleViewScroll = useCallback(
     async (e: React.UIEvent<HTMLDivElement>) => {
       const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
@@ -250,20 +321,29 @@ export default function Sheet() {
       if (shouldFetchMore && !isLoadingMore && tableData?.hasMoreRows) {
         setIsLoadingMore(true);
         try {
+          // Use the current number of rows as the cursor for pagination
+          const currentRowCount = tableData.rows.length;
+
           const result = await utils.view.getViewRows.fetch({
             tableId: selectedTableId ?? 0,
             viewId: selectedViewId!,
             limit: ROWS_PER_PAGE,
-            cursor: tableData.rows.length,
+            cursor: currentRowCount,
           });
 
           if (result) {
             setTableData((prev) => {
               if (!prev) return prev;
 
+              // Ensure we don't add duplicate rows
+              const existingRowIds = new Set(prev.rows.map((row) => row.id));
+              const newRows = result.rows.filter(
+                (row) => !existingRowIds.has(row.id),
+              );
+
               return {
                 ...prev,
-                rows: [...prev.rows, ...result.rows],
+                rows: [...prev.rows, ...newRows],
                 hasMoreRows: result.hasMoreRows,
               };
             });
@@ -288,19 +368,26 @@ export default function Sheet() {
         rows: { updates: [], newRows: [] },
       });
 
+      // update the sheetData to include the new table
       utils.sheet.findSheet.setData({ id: sheetId }, (old) => {
         if (!old) return old;
         return {
           ...old,
-          tables: old.tables.map((table) => ({
-            ...table,
-            totalRows: 0,
-            hasMoreRows: false,
-            rows: [],
-            headers: [],
-          })),
+          tables: [
+            ...old.tables,
+            {
+              ...newTable,
+              totalRows: 0,
+              hasMoreRows: false,
+              rows: [],
+              headers: [],
+            },
+          ],
         };
       });
+
+      // invalidate the views query for the new table
+      await utils.view.getViews.invalidate({ tableId: newTable.id });
 
       const params = new URLSearchParams(searchParams);
       params.set("table", newTable.id.toString());
@@ -312,6 +399,8 @@ export default function Sheet() {
   const handleAddTable = () => {
     // create a new table with sheet ID
     createTable.mutate({ sheetId: sheetId });
+    setSelectedViewId(null);
+    void utils.sheet.findSheet.refetch();
   };
 
   // cell component
@@ -338,6 +427,7 @@ export default function Sheet() {
       }
     };
 
+    // focus next cell on tab
     const focusNextCell = (reverse = false) => {
       const allInputs = Array.from(
         document.querySelectorAll('input[id^="cell-"]'),
@@ -402,6 +492,7 @@ export default function Sheet() {
   }, [sheetData?.tables, selectedTableId, router, pathname, searchParams]);
 
   // update the table data with the pending changes for UI
+  // also called when a new table is selected
   useEffect(() => {
     if (!sheetData?.tables || !selectedTableId) return;
 
@@ -452,21 +543,20 @@ export default function Sheet() {
       rows: { updates: [], newRows: [] },
     });
 
-    // reset pagination
-    setCurrentPage(0);
-    setLastCursor(undefined);
     setSelectedViewId(null);
 
     const params = new URLSearchParams(searchParams);
     params.set("table", tableId.toString());
+    params.delete("view"); // remvoe the view parameter when switching tables
     router.push(`${pathname}?${params.toString()}`);
   };
 
-  // batch update for rows (mutation)
+  // MUTATION for batch update
   const batchUpdate = api.row.batchUpdate.useMutation({
-    async onMutate() {
+    async onMutate({ updates, newRows }) {
       await utils.sheet.findSheet.cancel();
       const prevData = utils.sheet.findSheet.getData({ id: sheetId });
+      const currentTableData = tableData!;
 
       utils.sheet.findSheet.setData({ id: sheetId }, (old) => {
         if (!old) return old;
@@ -477,17 +567,41 @@ export default function Sheet() {
             table.id === tableData?.id
               ? {
                   ...table,
-                  rows: table.rows.map((row) => ({
-                    ...row,
-                    values: row.values,
-                  })),
+                  rows: (currentTableData?.rows ?? [])
+                    .map((row) => ({
+                      ...row,
+                      id: row.id ?? -1,
+                      createdAt: new Date(),
+                      values:
+                        updates.find((u) => u.rowId === row.id)?.values ??
+                        row.values,
+                    }))
+                    .concat(
+                      newRows.map((row) => ({
+                        ...row,
+                        id: -1,
+                        createdAt: new Date(),
+                      })),
+                    ),
+                  hasMoreRows: currentTableData?.hasMoreRows ?? false,
                 }
               : table,
           ),
         };
       });
 
-      return { prevData };
+      return { prevData, currentTableData };
+    },
+
+    onSettled(data, error, variables, context) {
+      if (context?.currentTableData) {
+        // after mutation completes, restore all loaded rows
+        setTableData((prev) => ({
+          ...prev!,
+          rows: context.currentTableData.rows,
+          hasMoreRows: context.currentTableData.hasMoreRows,
+        }));
+      }
     },
   });
 
@@ -554,8 +668,7 @@ export default function Sheet() {
     },
   });
 
-  const BATCH_SIZE = 5000;
-
+  // save all changes
   const saveAllChanges = useCallback(async () => {
     if (!tableData?.id || isSaving) return;
 
@@ -639,6 +752,14 @@ export default function Sheet() {
         await saveAllChanges();
       }
 
+      // check if any filters are currently present
+      // filters will be saved by the view router
+      const currentFilters = filters.map((filter) => ({
+        columnId: filter.columnId,
+        type: filter.type,
+        value: filter.value,
+      }));
+
       // get current row order after changes are saved
       const currentOrder = table
         .getRowModel()
@@ -648,7 +769,10 @@ export default function Sheet() {
         name: viewName,
         tableId: tableData.id,
         rowOrder: currentOrder,
-        // sortConfig,
+        filters: currentFilters.map((filter) => ({
+          ...filter,
+          value: filter.value ?? undefined,
+        })),
       });
 
       // refetch views after successful creation
@@ -657,10 +781,52 @@ export default function Sheet() {
       setViewName("");
       setViewInputAnchor(null);
 
+      // Set the selected view ID
+      setSelectedViewId(newView.id);
+
+      // Cancel any existing queries
+      await utils.view.getViewRows.cancel();
+
+      // Clear existing table data rows first
+      setTableData((prev) =>
+        prev
+          ? {
+              ...prev,
+              rows: [],
+              hasMoreRows: true,
+            }
+          : prev,
+      );
+
       // navigate to the new view
       const params = new URLSearchParams(searchParams);
       params.set("view", newView.id.toString());
       router.push(`${pathname}?${params.toString()}`);
+
+      // fetch the initial view rows
+      setIsLoadingMore(true);
+      try {
+        // fetch the initial view rows directly
+        const result = await utils.view.getViewRows.fetch({
+          tableId: selectedTableId ?? 0,
+          viewId: newView.id,
+          limit: ROWS_PER_PAGE,
+          cursor: 0,
+        });
+
+        if (result) {
+          setTableData((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              rows: result.rows,
+              hasMoreRows: result.hasMoreRows,
+            };
+          });
+        }
+      } finally {
+        setIsLoadingMore(false);
+      }
     } catch (error) {
       console.error("Error saving view:", error);
       setSavingView(false);
@@ -705,6 +871,7 @@ export default function Sheet() {
       !isSaving &&
       !userActive
     ) {
+      // debouncing function
       triggerAutoSave();
     }
   }, [pendingChanges, triggerAutoSave, isSaving, userActive]);
@@ -813,6 +980,7 @@ export default function Sheet() {
     });
   };
 
+  // add new row to UI and pendingchanges
   const handleRowCreate = useCallback(() => {
     if (!tableData?.id) return;
 
@@ -883,6 +1051,7 @@ export default function Sheet() {
         (h) => h.headerPosition.toString() === headerPosition.toString(),
       );
 
+      // must match the column type
       if (header?.type === HeaderType.NUMBER) {
         if (isNaN(Number(value)) || value === "") {
           return;
@@ -892,6 +1061,9 @@ export default function Sheet() {
           return;
         }
       }
+
+      // store current table data before update
+      // const currentRows = tableData.rows;
 
       if (targetRow?.id) {
         setPendingChanges((prev) => ({
@@ -909,6 +1081,17 @@ export default function Sheet() {
             newRows: prev.rows.newRows,
           },
         }));
+
+        // update the tableData directly to preserve loaded rows
+        setTableData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            rows: prev.rows.map((row) =>
+              row.id === targetRow.id ? { ...row, values: updatedValues } : row,
+            ),
+          };
+        });
       } else {
         // update new row using position
         setPendingChanges((prev) => ({
@@ -930,12 +1113,11 @@ export default function Sheet() {
     [tableData],
   );
 
-  // create a "view" of a particular table
+  // save a view to db
   const createView = api.view.create.useMutation({
     async onMutate({}) {
       await utils.sheet.findSheet.cancel();
       const prevData = utils.sheet.findSheet.getData({ id: sheetId });
-
       return { prevData };
     },
     onError(err, newData, context) {
@@ -947,10 +1129,13 @@ export default function Sheet() {
 
   // get all views for a table
   const { data: views, refetch: refetchViews } = api.view.getViews.useQuery(
-    { tableId: tableData?.id ?? 0 },
-    { enabled: !!tableData?.id },
+    { tableId: selectedTableId ?? 0 },
+    {
+      enabled: selectedTableId !== null,
+    },
   );
 
+  // get rows for a view, inf scrolling
   const viewRowsQuery = api.view.getViewRows.useQuery(
     {
       tableId: selectedTableId ?? 0,
@@ -958,48 +1143,80 @@ export default function Sheet() {
       limit: ROWS_PER_PAGE,
       cursor: 0,
     },
-    { enabled: false },
+    {
+      enabled: !!selectedViewId,
+    },
   );
 
+  // select a view
   const handleViewSelect = async (viewId: number | null) => {
     setSelectedViewId(viewId);
     setIsLoadingMore(true);
     try {
-      if (viewId) {
-        setCurrentPage(0);
+      if (viewId && views) {
+        const view = views.find((v) => v.id === viewId);
+        if (view) {
+          setFilters(view.filters ?? []);
 
-        const params = new URLSearchParams(searchParams);
-        params.set("view", viewId.toString());
-        router.push(`${pathname}?${params.toString()}`);
+          // Cancel any existing queries
+          await utils.view.getViewRows.cancel();
 
-        if (!tableData?.rows || tableData.rows.length < ROWS_PER_PAGE) {
-          const result = await viewRowsQuery.refetch();
-          if (result.data) {
-            setTableData((prev) => ({
-              ...prev!,
-              rows: result.data.rows.map((row) => ({
-                ...row,
-                values: row.values,
-              })),
-              hasMoreRows: result.data.hasMoreRows,
-            }));
+          const params = new URLSearchParams(searchParams);
+          params.set("view", viewId.toString());
+          router.push(`${pathname}?${params.toString()}`);
+
+          // clear existing table data rows first
+          setTableData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  rows: [],
+                  hasMoreRows: true,
+                }
+              : prev,
+          );
+
+          // fetch the initial view rows directly instead of using refetch
+          const result = await utils.view.getViewRows.fetch({
+            tableId: selectedTableId ?? 0,
+            viewId: viewId,
+            limit: ROWS_PER_PAGE,
+            cursor: 0,
+          });
+
+          if (result) {
+            setTableData((prev) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                rows: result.rows,
+                hasMoreRows: result.hasMoreRows,
+              };
+            });
           }
         }
       } else {
-        setCurrentPage(0);
+        // clear filters when deselecting a view
+        setFilters([]);
 
-        // Clear view from URL
+        // reset table data to initial state and refetch
+        const selectedTable = sheetData?.tables.find(
+          (t) => t.id === selectedTableId,
+        );
+        if (selectedTable) {
+          setTableData(selectedTable);
+        }
+
         const params = new URLSearchParams(searchParams);
         params.delete("view");
         router.push(`${pathname}?${params.toString()}`);
-
-        // await utils.sheet.findSheet.refetch();
       }
     } finally {
       setIsLoadingMore(false);
     }
   };
 
+  // row sorting (asc, desc)
   const sortRows = (rows: any[], configs: SortConfig[]) => {
     // if no sort, keep original order
     if (configs.length === 0) return rows;
@@ -1009,15 +1226,22 @@ export default function Sheet() {
 
     // if only one sort
     if (configs.length === 1) {
+      // copy rows to avoid mutating original
       return [...rows].sort((a, b) => {
+        // get first sort config
         const config = orderedConfigs[0];
+
+        // get value from first and second row
         const aValue = a.values[config?.columnId ?? ""] ?? "";
         const bValue = b.values[config?.columnId ?? ""] ?? "";
 
+        // if both values are numbers
         if (!isNaN(aValue) && !isNaN(bValue)) {
           const comparison = Number(aValue) - Number(bValue);
+          // reverse direction if desc
           return config?.direction === "asc" ? comparison : -comparison;
         }
+
         const comparison = aValue.toString().localeCompare(bValue.toString());
         return config?.direction === "asc" ? comparison : -comparison;
       });
@@ -1037,9 +1261,10 @@ export default function Sheet() {
       groups.get(value)!.push(row);
     });
 
-    // sort each group by secondary sort
+    // sort each group by primary and secondary sort
     const sortedRows: typeof rows = [];
     [...groups.entries()]
+      // sort by groups for primary sort
       .sort(([a], [b]) => {
         if (!isNaN(Number(a)) && !isNaN(Number(b))) {
           const comparison = Number(a) - Number(b);
@@ -1067,6 +1292,55 @@ export default function Sheet() {
       });
 
     return sortedRows;
+  };
+
+  // add a filter to the filters array
+  const handleFilterChange = (filter: Filter) => {
+    setFilters((prev) => {
+      const existing = prev.findIndex((f) => f.columnId === filter.columnId);
+      if (existing >= 0) {
+        return [
+          ...prev.slice(0, existing),
+          filter,
+          ...prev.slice(existing + 1),
+        ];
+      }
+      return [...prev, filter];
+    });
+  };
+
+  // add a filter to the filters array
+  const handleFilterSubmit = (type: string, header: Header) => {
+    if (type === "isEmpty" || type === "isNotEmpty") {
+      handleFilterChange({
+        columnId: header.headerPosition.toString(),
+        type: type as any,
+      });
+      setAddFilterOpen(false);
+      setAddFilterAnchor(null);
+      setAddFilterColumnId(null);
+    } else if (type === "greaterThan" || type === "lessThan") {
+      handleFilterChange({
+        columnId: header.headerPosition.toString(),
+        type: type as any,
+        value:
+          type === "greaterThan" ? greaterThan.toString() : lessThan.toString(),
+      });
+      setGreaterThan("");
+      setAddFilterAnchor(null);
+      setAddFilterColumnId(null);
+      setSelectedHeader(null);
+    } else {
+      handleFilterChange({
+        columnId: header.headerPosition.toString(),
+        type: type as any,
+        value: contains,
+      });
+      setContains("");
+      setAddFilterAnchor(null);
+      setAddFilterColumnId(null);
+      setSelectedHeader(null);
+    }
   };
 
   // caching columns for the table
@@ -1099,7 +1373,7 @@ export default function Sheet() {
                 {header.name}
               </div>
               <button
-                onClick={() => {
+                onClick={(e) => {
                   const columnId = header.headerPosition.toString();
                   const existingSort = sortConfigs.find(
                     (s) => s.columnId === columnId,
@@ -1168,69 +1442,151 @@ export default function Sheet() {
     sortConfigs,
   ]);
 
-  const table = useReactTable({
-    data: useMemo(() => {
-      if (!tableData?.rows) return [];
+  const tableRows = useMemo(() => {
+    if (!tableData?.rows) return [];
 
-      // get existing rows that aren't in pendingChanges
-      const existingRows = tableData.rows.filter(
-        (row) =>
-          !pendingChanges.rows.updates.some(
-            (update) => update.rowId === row.id,
-          ) &&
-          !pendingChanges.rows.newRows.some(
-            (newRow) => newRow.rowPosition === row.rowPosition,
-          ),
-      );
+    // get existing rows that aren't in pendingChanges
+    const existingRows = tableData.rows.filter(
+      (row) =>
+        !pendingChanges.rows.updates.some(
+          (update) => update.rowId === row.id,
+        ) &&
+        !pendingChanges.rows.newRows.some(
+          (newRow) => newRow.rowPosition === row.rowPosition,
+        ),
+    );
 
-      // combine with pending updates and new rows
-      let allRows = [
-        ...existingRows,
-        ...pendingChanges.rows.updates.map((update) => ({
-          ...update,
-          id: update.rowId,
-          tableId: update.tableId,
-          values: update.values,
-        })),
-        ...pendingChanges.rows.newRows,
-      ];
+    // combine with pending updates and new rows
+    let allRows = [
+      ...existingRows,
+      ...pendingChanges.rows.updates.map((update) => ({
+        ...update,
+        id: update.rowId,
+        tableId: update.tableId,
+        values: update.values,
+      })),
+      ...pendingChanges.rows.newRows,
+    ];
 
-      const viewId = searchParams.get("view")
-        ? parseInt(searchParams.get("view")!)
-        : null;
+    // apply filters
+    if (filters.length > 0) {
+      allRows = allRows.filter((row) => {
+        return filters.every((filter) => {
+          const value = row.values[filter.columnId];
 
-      if (viewId && views) {
-        const view = views.find((v) => v.id === viewId);
-        if (view?.rowOrder) {
-          allRows = view.rowOrder
-            .map((position) =>
-              allRows.find((row) => row.rowPosition === position),
-            )
-            .filter((row): row is (typeof allRows)[0] => !!row);
-        }
-      } else if (sortConfigs.length > 0) {
-        // Apply multi-column sort if no view is selected
-        allRows = sortRows(allRows, sortConfigs);
-      } else {
-        // default sorting by rowPosition
-        allRows.sort((a, b) => a.rowPosition - b.rowPosition);
+          switch (filter.type) {
+            case "isEmpty":
+              return !value || value.trim() === "";
+            case "isNotEmpty":
+              return value && value.trim() !== "";
+            case "contains":
+              return value
+                ?.toLowerCase()
+                .includes(filter.value?.toString().toLowerCase() ?? "");
+            case "greaterThan":
+              return Number(value) > Number(filter.value);
+            case "lessThan":
+              return Number(value) < Number(filter.value);
+            default:
+              return true;
+          }
+        });
+      });
+    }
+
+    const viewId = searchParams.get("view")
+      ? parseInt(searchParams.get("view")!)
+      : null;
+
+    if (viewId && views) {
+      const view = views.find((v) => v.id === viewId);
+      if (view?.rowOrder) {
+        allRows = view.rowOrder
+          .map((position) =>
+            allRows.find((row) => row.rowPosition === position),
+          )
+          .filter((row): row is (typeof allRows)[0] => !!row);
       }
+    } else if (sortConfigs.length > 0) {
+      // Apply multi-column sort if no view is selected
+      allRows = sortRows(allRows, sortConfigs);
+    } else {
+      // default sorting by rowPosition
+      allRows.sort((a, b) => a.rowPosition - b.rowPosition);
+    }
 
-      return allRows;
-    }, [
-      tableData?.rows,
-      pendingChanges.rows.updates,
-      pendingChanges.rows.newRows,
-      ROWS_PER_PAGE,
-      searchParams,
-      views,
-      sortConfigs,
-    ]),
+    return allRows;
+  }, [
+    tableData?.rows,
+    pendingChanges.rows.updates,
+    pendingChanges.rows.newRows,
+    ROWS_PER_PAGE,
+    searchParams,
+    views,
+    sortConfigs,
+    applyFilters,
+  ]);
+
+  // tanstack table
+  // two types of filtering - search filter, and col-based filter
+  const table = useReactTable({
+    data: tableRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
     enableRowSelection: true,
+    getFilteredRowModel: getFilteredRowModel(),
+    state: {
+      columnFilters,
+      globalFilter,
+    },
+    onColumnFiltersChange: setColumnFilters,
+    onGlobalFilterChange: setGlobalFilter,
+    // search filter
+    globalFilterFn: (row, columnId, filterValue) => {
+      const value = row.getValue(columnId);
+      // if no value, return false
+      if (!value) return false;
+
+      // handle both primitive and object values
+      const stringValue =
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        typeof value === "object" ? JSON.stringify(value) : String(value);
+      // check if the value includes the filter value
+      return stringValue.toLowerCase().includes(filterValue.toLowerCase());
+    },
+    // col-based filter
+    filterFns: {
+      colFilter: (
+        row: Row<any>,
+        columnId: string,
+        filterValue: { type: FilterType; value?: string | null },
+      ): boolean => {
+        const value = row.getValue(columnId);
+        switch (filterValue.type) {
+          // 5 types of filters
+          case "isEmpty":
+            return !value || value === "";
+          case "isNotEmpty":
+            return value !== "";
+          case "contains":
+            return Boolean(
+              value
+                ?.toString()
+                .toLowerCase()
+                .includes(filterValue.value?.toLowerCase() ?? ""),
+            );
+          case "greaterThan":
+            return Number(value) > Number(filterValue.value ?? 0);
+          case "lessThan":
+            return Number(value) < Number(filterValue.value ?? 0);
+          default:
+            return true;
+        }
+      },
+    },
   });
 
+  // create 15000 new rows
   const handleBulkRowCreate = useCallback(() => {
     if (!tableData?.id) return;
 
@@ -1352,7 +1708,6 @@ export default function Sheet() {
             <p className="text-xs">Add 15K Rows</p>
           </button>
           <button
-            // onClick={handleBulkRowCreate}
             onClick={(e) =>
               setViewInputAnchor(viewInputAnchor ? null : e.currentTarget)
             }
@@ -1603,8 +1958,38 @@ export default function Sheet() {
               </div>
             </div>
             <div className="flex flex-row items-center justify-between gap-2">
-              <CiSearch className="ml-1 h-5 w-5" />
-              <p className="hidden text-xs md:flex">Search</p>
+              <button
+                className="flex flex-row items-center gap-2"
+                onClick={(e) => {
+                  setSearchInputAnchor(e.currentTarget);
+                  setSearchInputOpen(!searchInputOpen);
+                }}
+              >
+                <CiSearch className="ml-1 h-5 w-5" />
+                <p className="hidden text-xs md:flex">Search</p>
+              </button>
+              <Popup
+                open={searchInputOpen}
+                anchor={searchInputAnchor}
+                placement="bottom-start"
+              >
+                <div className="mt-2 w-[400px] max-w-[calc(100vw-2rem)] rounded-md border-[1px] bg-white px-4 py-2">
+                  <input
+                    type="text"
+                    value={searchInput}
+                    placeholder="Search all fields..."
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        handleSearchInput(searchInput);
+                        setSearchInputOpen(false);
+                      }
+                    }}
+                    className="mt-2 h-[32px] w-full rounded-md border-[1px] border-gray-300 p-2 text-xs font-normal"
+                    autoFocus
+                  />
+                </div>
+              </Popup>
             </div>
           </div>
         </div>
@@ -1634,10 +2019,168 @@ export default function Sheet() {
                         key={`header-${headerGroup.id}-${header.id}-${headerIndex}`}
                         className="flex h-full w-[178px] flex-row items-center justify-start border-y-[1px] border-r-[1px] border-gray-300 px-2 text-xs font-normal"
                       >
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
+                        <div
+                          className="flex h-full w-full flex-row items-center justify-between"
+                          onClick={(e) => {
+                            if (addFilterColumnId === header.column.id) {
+                              setAddFilterAnchor(null);
+                              setAddFilterOpen(false);
+                              setSelectedHeader(null);
+                              setAddFilterColumnId(null);
+                            } else {
+                              setAddFilterAnchor(
+                                e.currentTarget as unknown as HTMLButtonElement,
+                              );
+                              setAddFilterColumnId(header.column.id);
+                              setAddFilterOpen(true);
+                              const targetHeader = tableData?.headers.find(
+                                (h) =>
+                                  h.headerPosition.toString() ===
+                                  header.column.id,
+                              );
+
+                              if (targetHeader) {
+                                setSelectedHeader({
+                                  ...targetHeader,
+                                  id: targetHeader.id ?? 0,
+                                  tableId: tableData?.id ?? 0,
+                                });
+                              }
+                            }
+                          }}
+                        >
+                          {flexRender(
+                            header.column.columnDef.header,
+                            header.getContext(),
+                          )}
+                        </div>
+                        {addFilterColumnId === header.column.id &&
+                          addFilterAnchor &&
+                          selectedHeader && (
+                            <Popup
+                              open={addFilterOpen}
+                              anchor={addFilterAnchor}
+                              placement="bottom-end"
+                            >
+                              {((header) => {
+                                const targetHeader = tableData?.headers.find(
+                                  (h) =>
+                                    h.headerPosition.toString() ===
+                                    header.column.id,
+                                );
+
+                                if (!targetHeader) return null;
+                                const isNumber =
+                                  targetHeader.type === HeaderType.NUMBER;
+
+                                return (
+                                  <div className="rounded-md bg-white p-2 shadow-lg">
+                                    {isNumber ? (
+                                      <>
+                                        <div className="flex flex-col gap-2">
+                                          <button
+                                            className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
+                                            onClick={() =>
+                                              handleFilterSubmit(
+                                                "greaterThan",
+                                                {
+                                                  ...targetHeader,
+                                                  id: targetHeader.id ?? 0,
+                                                  tableId: tableData?.id ?? 0,
+                                                },
+                                              )
+                                            }
+                                          >
+                                            Greater than
+                                          </button>
+                                          <input
+                                            type="number"
+                                            value={greaterThan}
+                                            onChange={(e) =>
+                                              setGreaterThan(e.target.value)
+                                            }
+                                            className="w-full rounded border px-2 py-1 text-xs"
+                                            placeholder="Enter number..."
+                                          />
+                                          <button
+                                            className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
+                                            onClick={() =>
+                                              handleFilterSubmit("lessThan", {
+                                                ...targetHeader,
+                                                id: targetHeader.id ?? 0,
+                                                tableId: tableData?.id ?? 0,
+                                              })
+                                            }
+                                          >
+                                            Less than
+                                          </button>
+                                          <input
+                                            type="number"
+                                            value={lessThan}
+                                            onChange={(e) =>
+                                              setLessThan(e.target.value)
+                                            }
+                                            className="w-full rounded border px-2 py-1 text-xs"
+                                            placeholder="Enter number..."
+                                          />
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <button
+                                          className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
+                                          onClick={() =>
+                                            handleFilterSubmit("isEmpty", {
+                                              ...targetHeader,
+                                              id: targetHeader.id ?? 0,
+                                              tableId: tableData?.id ?? 0,
+                                            })
+                                          }
+                                        >
+                                          Is empty
+                                        </button>
+                                        <button
+                                          className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
+                                          onClick={() =>
+                                            handleFilterSubmit("isNotEmpty", {
+                                              ...targetHeader,
+                                              id: targetHeader.id ?? 0,
+                                              tableId: tableData?.id ?? 0,
+                                            })
+                                          }
+                                        >
+                                          Is not empty
+                                        </button>
+                                        <div className="2 flex flex-col gap-1">
+                                          <button
+                                            className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
+                                            onClick={() =>
+                                              handleFilterSubmit("contains", {
+                                                ...targetHeader,
+                                                id: targetHeader.id ?? 0,
+                                                tableId: tableData?.id ?? 0,
+                                              })
+                                            }
+                                          >
+                                            Contains
+                                          </button>
+                                          <input
+                                            type="text"
+                                            value={contains}
+                                            onChange={(e) =>
+                                              setContains(e.target.value)
+                                            }
+                                            className="w-full rounded border px-2 py-1 text-xs"
+                                            placeholder="Enter text..."
+                                          />
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                );
+                              })(header)}
+                            </Popup>
+                          )}
                       </th>
                     ))}
                     <th

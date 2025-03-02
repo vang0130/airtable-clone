@@ -131,4 +131,22 @@ model View {
     table     Table    @relation(fields: [tableId], references: [id])
     createdAt DateTime @default(now())
     rowOrder  Int[]
+    filters   Filter[]
+}
+
+enum FilterType {
+    isEmpty
+    isNotEmpty
+    contains
+    greaterThan
+    lessThan
+}
+
+model Filter {
+    id       Int        @id @default(autoincrement())
+    columnId String
+    type     FilterType
+    value    String?
+    view     View       @relation(fields: [viewId], references: [id])
+    viewId   Int
 }
