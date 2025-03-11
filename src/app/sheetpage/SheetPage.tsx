@@ -39,6 +39,7 @@ import { Unstable_Popup as Popup } from "@mui/base/Unstable_Popup";
 import type { JsonValue } from "next-auth/adapters";
 import { Header, HeaderType } from "@prisma/client";
 import { FilterType } from "@prisma/client";
+import { RiDeleteBin5Line } from "react-icons/ri";
 
 // some type declarations
 interface Table {
@@ -56,6 +57,8 @@ interface Table {
     rowPosition: number;
     tableId: number;
   }[];
+  totalRows: number; // Total number of rows in the table
+  loadedRows: number; // Number of currently loaded rows
 }
 
 interface CellProps {
@@ -214,16 +217,17 @@ export default function Sheet() {
 
   // column filter
   const [globalFilter, setGlobalFilter] = useState<string>("");
-  const [addFilterAnchor, setAddFilterAnchor] =
-    useState<HTMLButtonElement | null>(null);
-  const [addFilterOpen, setAddFilterOpen] = useState(false);
-  const [addFilterColumnId, setAddFilterColumnId] = useState<string | null>(
-    null,
-  );
   const [selectedHeader, setSelectedHeader] = useState<Header | null>(null);
-  const [greaterThan, setGreaterThan] = useState<string>("");
-  const [lessThan, setLessThan] = useState<string>("");
-  const [contains, setContains] = useState<string>("");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchor, setFilterAnchor] = useState<HTMLDivElement | null>(null);
+  const [isColSelectOpen, setIsColSelectOpen] = useState(false);
+  const [selectedCol, setSelectedCol] = useState<string>("");
+  const [isTypeSelectOpen, setIsTypeSelectOpen] = useState(false);
+  const [typeSelectionAnchor, setTypeSelectionAnchor] =
+    useState<HTMLElement | null>(null);
+  const [colSelectionAnchor, setColSelectionAnchor] =
+    useState<HTMLButtonElement | null>(null);
+  const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
 
   // filtering for search input
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -254,9 +258,17 @@ export default function Sheet() {
                 ?.toLowerCase()
                 .includes(filter.value?.toString().toLowerCase() ?? "");
             case "greaterThan":
-              return Number(value) > Number(filter.value);
+              return (
+                value &&
+                !isNaN(Number(value)) &&
+                Number(value) > Number(filter.value)
+              );
             case "lessThan":
-              return Number(value) < Number(filter.value);
+              return (
+                value &&
+                !isNaN(Number(value)) &&
+                Number(value) < Number(filter.value)
+              );
             default:
               return true;
           }
@@ -270,15 +282,16 @@ export default function Sheet() {
   const handleTableScroll = useCallback(
     async (e: React.UIEvent<HTMLDivElement>) => {
       const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-      // start loading when user is halfway through current batch
-      const halfwayPoint = scrollHeight / 2;
-      const shouldFetchMore = scrollTop >= halfwayPoint;
+      // trigger 200px from bottom
+      const threshold = 200;
+      const shouldFetchMore =
+        scrollHeight - scrollTop - clientHeight < threshold;
 
       if (shouldFetchMore && !isLoadingMore && tableData?.hasMoreRows) {
         setIsLoadingMore(true);
-        try {
-          const lastRowId = tableData.rows[tableData.rows.length - 1]?.id;
+        const lastRowId = tableData.rows[tableData.rows.length - 1]?.id;
 
+        try {
           const result = await utils.table.getMoreRows.fetch({
             tableId: selectedTableId ?? 0,
             pageSize: ROWS_PER_PAGE,
@@ -289,19 +302,25 @@ export default function Sheet() {
             setTableData((prev) => {
               if (!prev) return prev;
 
-              // no duplicates
-              const newRowIds = new Set(result.rows.map((row) => row.id));
-              const filteredExistingRows = prev.rows.filter(
-                (row) => !newRowIds.has(row.id ?? 0),
-              );
+              const uniqueRows = new Map();
+
+              prev.rows.forEach((row) => {
+                if (row.id) uniqueRows.set(row.id, row);
+              });
+
+              result.rows.forEach((row) => {
+                if (row.id) uniqueRows.set(row.id, row);
+              });
 
               return {
                 ...prev,
-                rows: [...filteredExistingRows, ...result.rows],
+                rows: Array.from(uniqueRows.values()),
                 hasMoreRows: result.hasMoreRows,
               };
             });
           }
+        } catch (error) {
+          console.error("Error loading more rows:", error);
         } finally {
           setIsLoadingMore(false);
         }
@@ -314,16 +333,15 @@ export default function Sheet() {
   const handleViewScroll = useCallback(
     async (e: React.UIEvent<HTMLDivElement>) => {
       const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-      // start loading when user is halfway through current batch
-      const halfwayPoint = scrollHeight / 2;
-      const shouldFetchMore = scrollTop >= halfwayPoint;
+      const threshold = 200;
+      const shouldFetchMore =
+        scrollHeight - scrollTop - clientHeight < threshold;
 
       if (shouldFetchMore && !isLoadingMore && tableData?.hasMoreRows) {
         setIsLoadingMore(true);
-        try {
-          // Use the current number of rows as the cursor for pagination
-          const currentRowCount = tableData.rows.length;
+        const currentRowCount = tableData.rows.length;
 
+        try {
           const result = await utils.view.getViewRows.fetch({
             tableId: selectedTableId ?? 0,
             viewId: selectedViewId!,
@@ -335,19 +353,23 @@ export default function Sheet() {
             setTableData((prev) => {
               if (!prev) return prev;
 
-              // Ensure we don't add duplicate rows
-              const existingRowIds = new Set(prev.rows.map((row) => row.id));
-              const newRows = result.rows.filter(
-                (row) => !existingRowIds.has(row.id),
-              );
+              const uniqueRows = new Map();
+              prev.rows.forEach((row) => {
+                if (row.id) uniqueRows.set(row.id, row);
+              });
+              result.rows.forEach((row) => {
+                if (row.id) uniqueRows.set(row.id, row);
+              });
 
               return {
                 ...prev,
-                rows: [...prev.rows, ...newRows],
+                rows: Array.from(uniqueRows.values()),
                 hasMoreRows: result.hasMoreRows,
               };
             });
           }
+        } catch (error) {
+          console.error("Error loading more view rows:", error);
         } finally {
           setIsLoadingMore(false);
         }
@@ -530,6 +552,8 @@ export default function Sheet() {
         }),
         ...pendingChanges.rows.newRows,
       ].sort((a, b) => a.rowPosition - b.rowPosition),
+      totalRows: selectedTable.totalRows,
+      loadedRows: selectedTable.rows.length,
     };
 
     setTableData(mergedTable);
@@ -556,7 +580,7 @@ export default function Sheet() {
     async onMutate({ updates, newRows }) {
       await utils.sheet.findSheet.cancel();
       const prevData = utils.sheet.findSheet.getData({ id: sheetId });
-      const currentTableData = tableData!;
+      // const currentTableData = tableData!;
 
       utils.sheet.findSheet.setData({ id: sheetId }, (old) => {
         if (!old) return old;
@@ -567,42 +591,38 @@ export default function Sheet() {
             table.id === tableData?.id
               ? {
                   ...table,
-                  rows: (currentTableData?.rows ?? [])
-                    .map((row) => ({
+                  rows: [
+                    ...table.rows.map((row) => ({
                       ...row,
-                      id: row.id ?? -1,
-                      createdAt: new Date(),
                       values:
                         updates.find((u) => u.rowId === row.id)?.values ??
                         row.values,
-                    }))
-                    .concat(
-                      newRows.map((row) => ({
-                        ...row,
-                        id: -1,
-                        createdAt: new Date(),
-                      })),
-                    ),
-                  hasMoreRows: currentTableData?.hasMoreRows ?? false,
+                    })),
+                    ...newRows.map((row) => ({
+                      ...row,
+                      id: -1,
+                      createdAt: new Date(),
+                    })),
+                  ],
                 }
               : table,
           ),
         };
       });
 
-      return { prevData, currentTableData };
+      return { prevData };
     },
 
-    onSettled(data, error, variables, context) {
-      if (context?.currentTableData) {
-        // after mutation completes, restore all loaded rows
-        setTableData((prev) => ({
-          ...prev!,
-          rows: context.currentTableData.rows,
-          hasMoreRows: context.currentTableData.hasMoreRows,
-        }));
-      }
-    },
+    // onSettled(data, error, variables, context) {
+    // if (context?.currentTableData) {
+    // after mutation completes, restore all loaded rows
+    // setTableData((prev) => ({
+    //   ...prev!,
+    //   rows: context.currentTableData.rows,
+    //   hasMoreRows: context.currentTableData.hasMoreRows,
+    // }));
+    // }
+    // },
   });
 
   // MUTATION for adding new header with optimistic UI updates
@@ -1038,6 +1058,21 @@ export default function Sheet() {
     ) => {
       if (!tableData?.id) return;
 
+      // add type validation first
+      const header = tableData?.headers.find(
+        (h) => h.headerPosition.toString() === headerPosition.toString(),
+      );
+
+      if (
+        header?.type === HeaderType.NUMBER &&
+        (isNaN(Number(value)) || value === "")
+      ) {
+        return;
+      }
+      if (header?.type === HeaderType.TEXT && /^\d+$/.test(value)) {
+        return;
+      }
+
       const updatedValues = {
         ...rowValues,
         [headerPosition.toString()]: value,
@@ -1047,68 +1082,47 @@ export default function Sheet() {
         (r) => r.rowPosition === rowPosition && r.tableId === tableId,
       );
 
-      const header = tableData?.headers.find(
-        (h) => h.headerPosition.toString() === headerPosition.toString(),
-      );
+      // update pending changes first
+      setPendingChanges((prev) => {
+        const newState = { ...prev };
 
-      // must match the column type
-      if (header?.type === HeaderType.NUMBER) {
-        if (isNaN(Number(value)) || value === "") {
-          return;
+        if (targetRow?.id) {
+          // remove any existing update for this row
+          newState.rows.updates = prev.rows.updates.filter(
+            (u) => u.rowId !== targetRow.id,
+          );
+          newState.rows.updates.push({
+            rowId: targetRow.id,
+            rowPosition,
+            tableId,
+            values: updatedValues,
+          });
+        } else {
+          // handle new rows
+          newState.rows.newRows = prev.rows.newRows.map((row) =>
+            row.rowPosition === rowPosition && row.tableId === tableId
+              ? { ...row, values: updatedValues }
+              : row,
+          );
         }
-      } else if (header?.type === HeaderType.TEXT) {
-        if (/^\d+$/.test(value)) {
-          return;
-        }
-      }
 
-      // store current table data before update
-      // const currentRows = tableData.rows;
+        return newState;
+      });
 
-      if (targetRow?.id) {
-        setPendingChanges((prev) => ({
-          ...prev,
-          rows: {
-            updates: [
-              ...prev.rows.updates.filter((u) => u.rowId !== targetRow.id),
-              {
-                rowId: targetRow.id!,
-                rowPosition,
-                tableId,
-                values: updatedValues,
-              },
-            ],
-            newRows: prev.rows.newRows,
-          },
-        }));
-
-        // update the tableData directly to preserve loaded rows
+      requestAnimationFrame(() => {
         setTableData((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
             rows: prev.rows.map((row) =>
-              row.id === targetRow.id ? { ...row, values: updatedValues } : row,
+              row.id === targetRow?.id ||
+              (row.rowPosition === rowPosition && row.tableId === tableId)
+                ? { ...row, values: updatedValues }
+                : row,
             ),
           };
         });
-      } else {
-        // update new row using position
-        setPendingChanges((prev) => ({
-          ...prev,
-          rows: {
-            updates: prev.rows.updates,
-            newRows: prev.rows.newRows.map((row) =>
-              row.rowPosition === rowPosition && row.tableId === tableId
-                ? {
-                    ...row,
-                    values: updatedValues,
-                  }
-                : row,
-            ),
-          },
-        }));
-      }
+      });
     },
     [tableData],
   );
@@ -1204,7 +1218,10 @@ export default function Sheet() {
           (t) => t.id === selectedTableId,
         );
         if (selectedTable) {
-          setTableData(selectedTable);
+          setTableData({
+            ...selectedTable,
+            loadedRows: selectedTable.rows.length,
+          });
         }
 
         const params = new URLSearchParams(searchParams);
@@ -1216,131 +1233,122 @@ export default function Sheet() {
     }
   };
 
-  // row sorting (asc, desc)
-  const sortRows = (rows: any[], configs: SortConfig[]) => {
-    // if no sort, keep original order
+  // Keep the client-side sortRows for immediate feedback on visible rows
+  const sortRows = (
+    rows: any[],
+    configs: SortConfig[],
+    totalRows: number,
+    loadedRows: number,
+  ) => {
     if (configs.length === 0) return rows;
 
-    // sort by priority (lowest/earliest first)
-    const orderedConfigs = [...configs].sort((a, b) => a.priority - b.priority);
+    const hasUnloadedRows = loadedRows < totalRows;
+    const orderedConfigs = configs.sort((a, b) => a.priority - b.priority);
+
+    // Modified helper function to always push text values down in desc sort
+    const shouldPushToBottom = (value: string, direction: SortDirection) => {
+      return direction === "desc" && (isNaN(Number(value)) || value === "");
+    };
 
     // if only one sort
-    if (configs.length === 1) {
-      // copy rows to avoid mutating original
+    if (orderedConfigs.length === 1) {
+      const config = orderedConfigs[0]!; // Add non-null assertion
       return [...rows].sort((a, b) => {
-        // get first sort config
-        const config = orderedConfigs[0];
+        const aValue = a.values[config.columnId] ?? "";
+        const bValue = b.values[config.columnId] ?? "";
 
-        // get value from first and second row
-        const aValue = a.values[config?.columnId ?? ""] ?? "";
-        const bValue = b.values[config?.columnId ?? ""] ?? "";
+        // Always push text values to bottom in desc sort
+        if (shouldPushToBottom(aValue, config.direction)) return 1;
+        if (shouldPushToBottom(bValue, config.direction)) return -1;
 
-        // if both values are numbers
-        if (!isNaN(aValue) && !isNaN(bValue)) {
+        // Normal numeric comparison
+        if (!isNaN(Number(aValue)) && !isNaN(Number(bValue))) {
           const comparison = Number(aValue) - Number(bValue);
-          // reverse direction if desc
-          return config?.direction === "asc" ? comparison : -comparison;
+          return config.direction === "asc" ? comparison : -comparison;
         }
 
+        // Text comparison (only reaches here if all rows are loaded or sort is ascending)
         const comparison = aValue.toString().localeCompare(bValue.toString());
-        return config?.direction === "asc" ? comparison : -comparison;
+        return config.direction === "asc" ? comparison : -comparison;
       });
     }
 
     // if two sorts
-    const primarySort = orderedConfigs[0];
-    const secondarySort = orderedConfigs[1];
-
-    // group rows by primary sort value
+    const [primarySort, secondarySort] = orderedConfigs as [
+      SortConfig,
+      SortConfig,
+    ]; // Type assertion
     const groups = new Map<string, typeof rows>();
-    rows.forEach((row) => {
-      const value = row.values[primarySort?.columnId ?? ""] ?? "";
+
+    // First, separate numeric and text values for desc sort
+    const textRows: typeof rows = [];
+    const numericRows = rows.filter((row) => {
+      const value = row.values[primarySort.columnId] ?? "";
+      if (shouldPushToBottom(value, primarySort.direction)) {
+        textRows.push(row);
+        return false;
+      }
+      return true;
+    });
+
+    // Group numeric rows by primary sort value
+    numericRows.forEach((row) => {
+      const value = row.values[primarySort.columnId] ?? "";
       if (!groups.has(value)) {
         groups.set(value, []);
       }
       groups.get(value)!.push(row);
     });
 
-    // sort each group by primary and secondary sort
-    const sortedRows: typeof rows = [];
+    // Sort numeric groups and their contents
+    const sortedNumericRows: typeof rows = [];
     [...groups.entries()]
-      // sort by groups for primary sort
       .sort(([a], [b]) => {
-        if (!isNaN(Number(a)) && !isNaN(Number(b))) {
-          const comparison = Number(a) - Number(b);
-          return primarySort?.direction === "asc" ? comparison : -comparison;
-        }
-        const comparison = a.toString().localeCompare(b.toString());
-        return primarySort?.direction === "asc" ? comparison : -comparison;
+        const comparison = Number(a) - Number(b);
+        return primarySort.direction === "asc" ? comparison : -comparison;
       })
       .forEach(([_, groupRows]) => {
-        // sort within group by secondary sort
         groupRows.sort((a, b) => {
-          const aValue = a.values[secondarySort?.columnId ?? ""] ?? "";
-          const bValue = b.values[secondarySort?.columnId ?? ""] ?? "";
+          const aValue = a.values[secondarySort.columnId] ?? "";
+          const bValue = b.values[secondarySort.columnId] ?? "";
 
-          if (!isNaN(aValue) && !isNaN(bValue)) {
+          if (shouldPushToBottom(aValue, secondarySort.direction)) return 1;
+          if (shouldPushToBottom(bValue, secondarySort.direction)) return -1;
+
+          if (!isNaN(Number(aValue)) && !isNaN(Number(bValue))) {
             const comparison = Number(aValue) - Number(bValue);
-            return secondarySort?.direction === "asc"
-              ? comparison
-              : -comparison;
+            return secondarySort.direction === "asc" ? comparison : -comparison;
           }
           const comparison = aValue.toString().localeCompare(bValue.toString());
-          return secondarySort?.direction === "asc" ? comparison : -comparison;
+          return secondarySort.direction === "asc" ? comparison : -comparison;
         });
-        sortedRows.push(...groupRows);
+        sortedNumericRows.push(...groupRows);
       });
 
-    return sortedRows;
+    // For desc sort, append text rows at the end only if all rows are loaded
+    return hasUnloadedRows && primarySort.direction === "desc"
+      ? sortedNumericRows
+      : [...sortedNumericRows, ...textRows];
   };
 
   // add a filter to the filters array
-  const handleFilterChange = (filter: Filter) => {
+  const handleFilterChange = (filter: Filter, header: Header) => {
     setFilters((prev) => {
-      const existing = prev.findIndex((f) => f.columnId === filter.columnId);
+      const existing = prev.findIndex(
+        (f) => f.columnId === header.headerPosition.toString(),
+      );
       if (existing >= 0) {
         return [
           ...prev.slice(0, existing),
-          filter,
+          { ...filter, columnId: header.headerPosition.toString() },
           ...prev.slice(existing + 1),
         ];
       }
-      return [...prev, filter];
+      return [
+        ...prev,
+        { ...filter, columnId: header.headerPosition.toString() },
+      ];
     });
-  };
-
-  // add a filter to the filters array
-  const handleFilterSubmit = (type: string, header: Header) => {
-    if (type === "isEmpty" || type === "isNotEmpty") {
-      handleFilterChange({
-        columnId: header.headerPosition.toString(),
-        type: type as any,
-      });
-      setAddFilterOpen(false);
-      setAddFilterAnchor(null);
-      setAddFilterColumnId(null);
-    } else if (type === "greaterThan" || type === "lessThan") {
-      handleFilterChange({
-        columnId: header.headerPosition.toString(),
-        type: type as any,
-        value:
-          type === "greaterThan" ? greaterThan.toString() : lessThan.toString(),
-      });
-      setGreaterThan("");
-      setAddFilterAnchor(null);
-      setAddFilterColumnId(null);
-      setSelectedHeader(null);
-    } else {
-      handleFilterChange({
-        columnId: header.headerPosition.toString(),
-        type: type as any,
-        value: contains,
-      });
-      setContains("");
-      setAddFilterAnchor(null);
-      setAddFilterColumnId(null);
-      setSelectedHeader(null);
-    }
   };
 
   // caching columns for the table
@@ -1373,7 +1381,7 @@ export default function Sheet() {
                 {header.name}
               </div>
               <button
-                onClick={(e) => {
+                onClick={() => {
                   const columnId = header.headerPosition.toString();
                   const existingSort = sortConfigs.find(
                     (s) => s.columnId === columnId,
@@ -1484,9 +1492,17 @@ export default function Sheet() {
                 ?.toLowerCase()
                 .includes(filter.value?.toString().toLowerCase() ?? "");
             case "greaterThan":
-              return Number(value) > Number(filter.value);
+              return (
+                value &&
+                !isNaN(Number(value)) &&
+                Number(value) > Number(filter.value)
+              );
             case "lessThan":
-              return Number(value) < Number(filter.value);
+              return (
+                value &&
+                !isNaN(Number(value)) &&
+                Number(value) < Number(filter.value)
+              );
             default:
               return true;
           }
@@ -1509,7 +1525,12 @@ export default function Sheet() {
       }
     } else if (sortConfigs.length > 0) {
       // Apply multi-column sort if no view is selected
-      allRows = sortRows(allRows, sortConfigs);
+      allRows = sortRows(
+        allRows,
+        sortConfigs,
+        tableData.totalRows,
+        tableData.rows.length,
+      );
     } else {
       // default sorting by rowPosition
       allRows.sort((a, b) => a.rowPosition - b.rowPosition);
@@ -1525,6 +1546,8 @@ export default function Sheet() {
     views,
     sortConfigs,
     applyFilters,
+    tableData?.totalRows,
+    tableData?.rows.length,
   ]);
 
   // tanstack table
@@ -1637,6 +1660,50 @@ export default function Sheet() {
     pendingChanges.headers,
     pendingChanges.rows.newRows,
   ]);
+
+  const clearFilters = () => {
+    setSelectedHeader(null);
+    setSelectedCol("");
+    setSelectedFilter(null);
+    setFilters([]);
+  };
+
+  // Modify how we fetch more rows to include sort config
+  const fetchMoreRows = async () => {
+    setIsLoadingMore(true);
+    try {
+      const result = await utils.view.getViewRows.fetch({
+        tableId: selectedTableId ?? 0,
+        viewId: selectedViewId ?? 0,
+        limit: ROWS_PER_PAGE,
+        cursor: tableData?.rows.length ?? 0,
+      });
+
+      if (result) {
+        setTableData((prev) => {
+          if (!prev) return prev;
+          // Merge new rows with existing ones
+          const updatedRows = [...prev.rows, ...result.rows];
+          // Apply client-side sort to maintain consistency
+          const sortedRows = sortRows(
+            updatedRows,
+            sortConfigs,
+            prev.totalRows,
+            updatedRows.length,
+          );
+
+          return {
+            ...prev,
+            rows: sortedRows,
+            hasMoreRows: result.hasMoreRows,
+            loadedRows: updatedRows.length,
+          };
+        });
+      }
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
 
   return (
     <div className="flex h-screen flex-col">
@@ -1931,10 +1998,191 @@ export default function Sheet() {
                   Hide fields
                 </p>
               </div>
-              <div className="flex px-2 py-1">
+              <div
+                className="flex px-2 py-1"
+                onClick={(e) => {
+                  setFilterAnchor(e.currentTarget);
+                  setFilterOpen(!filterOpen);
+                }}
+              >
                 <PiTextAlignCenterLight className="h-4 w-4" />
                 <p className="ml-1 hidden text-xs md:flex">Filter</p>
               </div>
+              <Popup
+                open={filterOpen}
+                anchor={filterAnchor}
+                placement="bottom-end"
+                className="h-[124px] w-[590px] flex-row rounded-md border-[1px] border-gray-300 bg-white"
+              >
+                <div className="flex flex-row items-center justify-between px-4 pt-3">
+                  <p className="text-xs text-gray-800">
+                    In this view, show records
+                  </p>
+                </div>
+                <div className="flex flex-row justify-center px-4 pt-3">
+                  <div className="mr-4 flex h-[32px] flex-row items-center">
+                    <p className="text-xs">Where</p>
+                  </div>
+                  <div className="relative w-[130px] border border-gray-300 bg-white">
+                    <button
+                      className="flex h-[30px] w-[130px] items-center justify-between px-2 text-xs"
+                      onClick={(e) => {
+                        setIsColSelectOpen(!isColSelectOpen);
+                        setColSelectionAnchor(
+                          e.currentTarget as unknown as HTMLButtonElement,
+                        );
+                      }}
+                    >
+                      <span className="text-gray-700">
+                        {selectedCol || "Select column"}
+                      </span>
+                      <MdKeyboardArrowDown className="mr-2 h-4 w-4 text-gray-500" />
+                    </button>
+                    {isColSelectOpen && (
+                      <Popup open={isColSelectOpen} anchor={colSelectionAnchor}>
+                        <div className="top-[32px] z-50 w-[130px] rounded-md border border-gray-300 bg-white">
+                          <div className="max-h-[200px] overflow-y-auto">
+                            {tableData?.headers.map((header) => (
+                              <div
+                                key={header.headerPosition}
+                                className="flex cursor-pointer items-center px-3 py-2 text-xs hover:bg-gray-100"
+                                onClick={() => {
+                                  setIsColSelectOpen(false);
+                                  // setAddFilterColumnId(
+                                  //   header.headerPosition.toString(),
+                                  // );
+                                  setSelectedHeader({
+                                    ...header,
+                                    id: header.id ?? 0,
+                                    tableId: tableData?.id ?? 0,
+                                  });
+                                  setSelectedCol(header.name);
+                                }}
+                              >
+                                <span>{header.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </Popup>
+                    )}
+                  </div>
+                  <div className="relative w-[130px] border-y border-gray-300 bg-white">
+                    <button
+                      className="flex h-[30px] w-[130px] items-center justify-between px-2 text-xs"
+                      onClick={(e) => {
+                        // if (selectedHeader) {
+                        setIsTypeSelectOpen(!isTypeSelectOpen);
+                        setTypeSelectionAnchor(
+                          e.currentTarget as HTMLButtonElement,
+                        );
+                        // }
+                      }}
+                      disabled={!selectedHeader}
+                    >
+                      <span className="text-gray-700">
+                        {selectedFilter ?? "condition"}
+                      </span>
+                      <MdKeyboardArrowDown className="mr-2 h-4 w-4 text-gray-500" />
+                    </button>
+                    {isTypeSelectOpen && selectedHeader && (
+                      <Popup
+                        open={isTypeSelectOpen}
+                        anchor={typeSelectionAnchor}
+                      >
+                        <div className="top-[32px] z-50 w-[130px] rounded-md border border-gray-300 bg-white shadow-lg">
+                          <div className="max-h-[200px] overflow-y-auto">
+                            {(selectedHeader.type === HeaderType.NUMBER
+                              ? ["greaterThan", "lessThan"]
+                              : ["contains", "isEmpty", "isNotEmpty"]
+                            ).map((type) => (
+                              <div
+                                key={type}
+                                className="flex cursor-pointer items-center px-3 py-2 text-xs hover:bg-gray-100"
+                                onClick={() => {
+                                  setSelectedFilter(type);
+                                  setIsTypeSelectOpen(false);
+
+                                  if (
+                                    type === "isEmpty" ||
+                                    type === "isNotEmpty"
+                                  ) {
+                                    // for types that don't need input, apply filter immediately
+                                    handleFilterChange(
+                                      {
+                                        columnId:
+                                          selectedHeader?.headerPosition.toString() ??
+                                          "",
+                                        type: type as FilterType,
+                                        value: null,
+                                      },
+                                      selectedHeader,
+                                    );
+                                  } else {
+                                    // for types that need input, just set the filter type
+                                    setSelectedFilter(type);
+                                    // handleFilterSubmit(type, selectedHeader);
+                                  }
+                                }}
+                              >
+                                <span>{type}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </Popup>
+                    )}
+                  </div>
+                  <div className="h-[32px] w-[130px] border-[1px] border-gray-300 px-2 text-xs">
+                    <input
+                      type={
+                        selectedHeader?.type === HeaderType.NUMBER
+                          ? "number"
+                          : "text"
+                      }
+                      className="h-full w-full text-xs outline-none"
+                      placeholder={`Enter a value...`}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (!value.trim()) return;
+
+                        if (selectedHeader?.type === HeaderType.NUMBER) {
+                          // check if input is a valid number
+                          if (!isNaN(Number(value)) && selectedHeader) {
+                            handleFilterChange(
+                              {
+                                columnId:
+                                  selectedHeader.headerPosition.toString(),
+                                type: selectedFilter as FilterType,
+                                value: value,
+                              },
+                              selectedHeader,
+                            );
+                          }
+                        } else if (selectedHeader) {
+                          handleFilterChange(
+                            {
+                              columnId:
+                                selectedHeader.headerPosition.toString(),
+                              type: selectedFilter as FilterType,
+                              value: value,
+                            },
+                            selectedHeader,
+                          );
+                        }
+                      }}
+                    />
+                  </div>
+                  <button
+                    className="h-[32px] w-[32px] items-center justify-center border border-l-0 border-gray-300 bg-white"
+                    onClick={() => {
+                      clearFilters();
+                    }}
+                  >
+                    <RiDeleteBin5Line className="mx-auto h-4 w-4" />
+                  </button>
+                </div>
+              </Popup>
               <div className="hidden px-2 py-1 sm:flex">
                 <CiViewList className="h-4 w-4" />
                 <p className="ml-1 hidden text-xs md:flex">Group</p>
@@ -1976,17 +2224,13 @@ export default function Sheet() {
                 <div className="mt-2 w-[400px] max-w-[calc(100vw-2rem)] rounded-md border-[1px] bg-white px-4 py-2">
                   <input
                     type="text"
+                    placeholder="Search..."
+                    className="h-[32px] w-[200px] border border-gray-300 px-2 text-sm"
                     value={searchInput}
-                    placeholder="Search all fields..."
-                    onChange={(e) => setSearchInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        handleSearchInput(searchInput);
-                        setSearchInputOpen(false);
-                      }
+                    onChange={(e) => {
+                      setSearchInput(e.target.value);
+                      handleSearchInput(e.target.value);
                     }}
-                    className="mt-2 h-[32px] w-full rounded-md border-[1px] border-gray-300 p-2 text-xs font-normal"
-                    autoFocus
                   />
                 </div>
               </Popup>
@@ -2019,168 +2263,12 @@ export default function Sheet() {
                         key={`header-${headerGroup.id}-${header.id}-${headerIndex}`}
                         className="flex h-full w-[178px] flex-row items-center justify-start border-y-[1px] border-r-[1px] border-gray-300 px-2 text-xs font-normal"
                       >
-                        <div
-                          className="flex h-full w-full flex-row items-center justify-between"
-                          onClick={(e) => {
-                            if (addFilterColumnId === header.column.id) {
-                              setAddFilterAnchor(null);
-                              setAddFilterOpen(false);
-                              setSelectedHeader(null);
-                              setAddFilterColumnId(null);
-                            } else {
-                              setAddFilterAnchor(
-                                e.currentTarget as unknown as HTMLButtonElement,
-                              );
-                              setAddFilterColumnId(header.column.id);
-                              setAddFilterOpen(true);
-                              const targetHeader = tableData?.headers.find(
-                                (h) =>
-                                  h.headerPosition.toString() ===
-                                  header.column.id,
-                              );
-
-                              if (targetHeader) {
-                                setSelectedHeader({
-                                  ...targetHeader,
-                                  id: targetHeader.id ?? 0,
-                                  tableId: tableData?.id ?? 0,
-                                });
-                              }
-                            }
-                          }}
-                        >
+                        <div className="flex h-full w-full flex-row items-center justify-between">
                           {flexRender(
                             header.column.columnDef.header,
                             header.getContext(),
                           )}
                         </div>
-                        {addFilterColumnId === header.column.id &&
-                          addFilterAnchor &&
-                          selectedHeader && (
-                            <Popup
-                              open={addFilterOpen}
-                              anchor={addFilterAnchor}
-                              placement="bottom-end"
-                            >
-                              {((header) => {
-                                const targetHeader = tableData?.headers.find(
-                                  (h) =>
-                                    h.headerPosition.toString() ===
-                                    header.column.id,
-                                );
-
-                                if (!targetHeader) return null;
-                                const isNumber =
-                                  targetHeader.type === HeaderType.NUMBER;
-
-                                return (
-                                  <div className="rounded-md bg-white p-2 shadow-lg">
-                                    {isNumber ? (
-                                      <>
-                                        <div className="flex flex-col gap-2">
-                                          <button
-                                            className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
-                                            onClick={() =>
-                                              handleFilterSubmit(
-                                                "greaterThan",
-                                                {
-                                                  ...targetHeader,
-                                                  id: targetHeader.id ?? 0,
-                                                  tableId: tableData?.id ?? 0,
-                                                },
-                                              )
-                                            }
-                                          >
-                                            Greater than
-                                          </button>
-                                          <input
-                                            type="number"
-                                            value={greaterThan}
-                                            onChange={(e) =>
-                                              setGreaterThan(e.target.value)
-                                            }
-                                            className="w-full rounded border px-2 py-1 text-xs"
-                                            placeholder="Enter number..."
-                                          />
-                                          <button
-                                            className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
-                                            onClick={() =>
-                                              handleFilterSubmit("lessThan", {
-                                                ...targetHeader,
-                                                id: targetHeader.id ?? 0,
-                                                tableId: tableData?.id ?? 0,
-                                              })
-                                            }
-                                          >
-                                            Less than
-                                          </button>
-                                          <input
-                                            type="number"
-                                            value={lessThan}
-                                            onChange={(e) =>
-                                              setLessThan(e.target.value)
-                                            }
-                                            className="w-full rounded border px-2 py-1 text-xs"
-                                            placeholder="Enter number..."
-                                          />
-                                        </div>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <button
-                                          className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
-                                          onClick={() =>
-                                            handleFilterSubmit("isEmpty", {
-                                              ...targetHeader,
-                                              id: targetHeader.id ?? 0,
-                                              tableId: tableData?.id ?? 0,
-                                            })
-                                          }
-                                        >
-                                          Is empty
-                                        </button>
-                                        <button
-                                          className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
-                                          onClick={() =>
-                                            handleFilterSubmit("isNotEmpty", {
-                                              ...targetHeader,
-                                              id: targetHeader.id ?? 0,
-                                              tableId: tableData?.id ?? 0,
-                                            })
-                                          }
-                                        >
-                                          Is not empty
-                                        </button>
-                                        <div className="2 flex flex-col gap-1">
-                                          <button
-                                            className="w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100"
-                                            onClick={() =>
-                                              handleFilterSubmit("contains", {
-                                                ...targetHeader,
-                                                id: targetHeader.id ?? 0,
-                                                tableId: tableData?.id ?? 0,
-                                              })
-                                            }
-                                          >
-                                            Contains
-                                          </button>
-                                          <input
-                                            type="text"
-                                            value={contains}
-                                            onChange={(e) =>
-                                              setContains(e.target.value)
-                                            }
-                                            className="w-full rounded border px-2 py-1 text-xs"
-                                            placeholder="Enter text..."
-                                          />
-                                        </div>
-                                      </>
-                                    )}
-                                  </div>
-                                );
-                              })(header)}
-                            </Popup>
-                          )}
                       </th>
                     ))}
                     <th
